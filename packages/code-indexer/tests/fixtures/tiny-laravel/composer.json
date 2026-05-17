@@ -1,0 +1,4 @@
+{
+  "name": "tiny/laravel",
+  "autoload": { "psr-4": { "App\\": "app/" } }
+}

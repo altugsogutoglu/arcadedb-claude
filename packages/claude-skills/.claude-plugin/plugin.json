@@ -1,0 +1,20 @@
+{
+  "name": "arcadedb-claude-skills",
+  "version": "0.2.0",
+  "description": "Auto-inject ArcadeDB graph context per project; slash commands for decisions, queries, indexing, and status. Pre-bundled hooks, zero runtime npm deps.",
+  "author": {
+    "name": "Altug Sogutoglu",
+    "url": "https://github.com/altugsogutoglu"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/altugsogutoglu/arcadedb-claude",
+  "repository": "https://github.com/altugsogutoglu/arcadedb-claude",
+  "keywords": [
+    "arcadedb",
+    "graph",
+    "claude-code",
+    "mcp",
+    "agent-memory",
+    "code-intelligence"
+  ]
+}

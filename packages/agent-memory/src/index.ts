@@ -1,0 +1,15 @@
+export { Client } from "./client.js";
+export type { Language } from "./client.js";
+export { loadEnv } from "./env.js";
+export type { ArcadeDBEnv } from "./env.js";
+export { ArcadeDBConnectionError, DatabaseNotFoundError, SchemaMismatchError } from "./errors.js";
+export type { Schema, VertexTypeDef, EdgeTypeDef, PropertyDef, PropertyType } from "./schemas/types.js";
+export { allSchemas, coreSchema, memorySchema, codeSchema, businessSchema, notesSchema } from "./schemas/all.js";
+export type { SchemaDomain } from "./schemas/all.js";
+export { renderSchema } from "./migrations/render.js";
+export { applySchemas } from "./migrations/apply.js";
+export { recordDecision, queryDecisions } from "./memory/decisions.js";
+export type { Decision, DecisionInput } from "./memory/decisions.js";
+export { recordInsight, queryInsights } from "./memory/insights.js";
+export type { Insight, InsightInput } from "./memory/insights.js";
+export { startSession, endSession } from "./memory/sessions.js";

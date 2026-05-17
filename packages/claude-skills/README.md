@@ -1,0 +1,145 @@
+# arcadedb-claude-skills
+
+Claude Code plugin: auto-injects ArcadeDB graph context per project and provides slash commands for graph operations. Phase 3 of the `arcadedb-claude` suite.
+
+## The arcadedb-claude suite
+
+A 4-package set that turns [ArcadeDB](https://arcadedb.com) into a first-class graph layer for Claude Code. Auto-injects graph context per project, records decisions across sessions, and indexes both code and notes into one queryable graph.
+
+| Package | Role |
+|---|---|
+| **[arcadedb-agent-memory](https://github.com/altugsogutoglu/arcadedb-agent-memory)** | Foundation: schemas + HTTP client + memory helpers + CLI |
+| **[arcadedb-code-indexer](https://github.com/altugsogutoglu/arcadedb-code-indexer)** | CLI: walks Laravel/Next.js repos, writes `:Module`/`:File`/`:IMPORTS` |
+| **[arcadedb-claude-skills](https://github.com/altugsogutoglu/arcadedb-claude-skills)** | Claude Code plugin: SessionStart hook + skill + 4 slash commands |
+| **[obsidian-to-arcadedb](https://github.com/altugsogutoglu/obsidian-to-arcadedb)** | CLI: syncs an Obsidian vault, writes `:Note`/`:Tag`/`:LINKS_TO` |
+
+```
+                       ArcadeDB (Docker, port 2480, MCP)
+                       claude_memory  |  per-project DBs
+                                ▲
+            ┌───────────────────┼───────────────────────────┐
+            │                   │                           │
+   agent-memory          code-indexer                obsidian-to-arcadedb
+   (schemas+lib+CLI)     (CLI)                       (CLI)
+            ▲                                                ▲
+            └────────── all depend on agent-memory ──────────┘
+                                ▲
+                         claude-skills
+                         (Claude Code plugin)
+                                ▲
+                           Claude Code session
+```
+
+All 4 packages are MIT, TypeScript, Node 20+.
+
+## Status
+
+v0.1.0, pre-release, GitHub-only. Not yet published to npm or to any Claude Code marketplace. npm publish planned for v0.2.
+
+## Install (from source)
+
+Requires `arcadedb-agent-memory` checked out as a sibling. Optionally `arcadedb-code-indexer` too if you want `/graph-index` to work.
+
+```bash
+# Foundation first
+git clone git@github.com:altugsogutoglu/arcadedb-agent-memory.git
+cd arcadedb-agent-memory && npm install && npm run build && npm link
+cd ..
+
+# (Optional) code-indexer, so /graph-index can shell out to it
+git clone git@github.com:altugsogutoglu/arcadedb-code-indexer.git
+cd arcadedb-code-indexer && npm install && npm run build && npm link
+cd ..
+
+# Then the plugin
+git clone git@github.com:altugsogutoglu/arcadedb-claude-skills.git
+cd arcadedb-claude-skills && npm install && npm run build && npm link
+# `arcadedb-skills-session-start` + `arcadedb-skills-post-tool-use` are now on PATH
+
+# Configure project mapping
+mkdir -p ~/.config/arcadedb
+cp config/projects.example.json ~/.config/arcadedb/projects.json
+# Edit ~/.config/arcadedb/projects.json with your actual project paths and DB names
+
+# Add the plugin to Claude Code
+# (Follow Claude Code's plugin install instructions for your version. The plugin's
+# .claude-plugin/plugin.json + hooks/hooks.json + skills/ + commands/ are what
+# Claude Code needs to discover.)
+```
+
+## What you get
+
+### Auto-injected context on session start
+
+When you start `claude` in a registered project, the plugin probes the graph and outputs:
+
+```
+ArcadeDB context loaded:
+  Project: project-a (DB: project-a, indexed: 2026-05-17, 142 files, 89 imports)
+  Schema: Repo, Module, File, Function, Class, Component, Route
+  Memory DB: claude_memory (12 decisions, 47 insights)
+```
+
+Claude sees this in its context so structural questions are answered from the graph rather than file reads.
+
+### Slash commands
+
+| Command | Purpose |
+|---|---|
+| `/graph-decision "<summary>" --rationale "..." [--repo X]` | Record a Decision node |
+| `/graph-query "<question or cypher>"` | Query the graph in natural language or raw Cypher |
+| `/graph-index [--auto-migrate] [--stack X]` | Index the current project into its DB |
+| `/graph-status` | List databases, type counts, project mapping |
+
+### Skill: arcadedb-graph
+
+Triggers on phrases like "how does X work", "what calls Y", "decision about Z". Tells Claude to query the graph first instead of reading files.
+
+## Configuration
+
+`~/.config/arcadedb/projects.json`:
+
+```json
+{
+  "version": 1,
+  "defaultMemoryDb": "claude_memory",
+  "projects": {
+    "project-a": {
+      "db": "project-a",
+      "path": "/Users/you/code/project-a",
+      "stack": ["nextjs"],
+      "indexLevel": 2,
+      "lastIndexed": null
+    }
+  }
+}
+```
+
+The plugin matches the current session's working directory against entries by:
+1. Exact path match.
+2. Basename match.
+3. Git remote origin name match.
+
+If nothing matches, only the memory DB context is injected.
+
+## Limitations (v0.1.0)
+
+- Bins must be on PATH (global npm install). Direct-from-repo install requires `npm link`.
+- No project auto-discovery; you must edit `projects.json` manually.
+- PostToolUse hook only logs to `stale.log`; it doesn't auto-reindex. v0.2 will add an auto-reindex option.
+- The `/graph-query` natural-language translation depends on Claude inferring Cypher from the schema cheat-sheet. Complex queries may need raw Cypher.
+
+## Roadmap
+
+**v0.2 — zero-friction install.** The goal is two lines in Claude Code:
+
+```
+/plugin marketplace add altugsogutoglu/arcadedb-marketplace
+/plugin install arcadedb-claude-skills@arcadedb-marketplace
+```
+
+That's it — no `npm link`, no global PATH setup, no sibling repos required. The plugin will declare the four sibling packages (`arcadedb-agent-memory`, `arcadedb-code-indexer`, `obsidian-to-arcadedb`, plus its own hooks) as runtime dependencies, resolved from the plugin's local `node_modules` instead of the global `$PATH`. Install on a fresh machine → everything works.
+
+## License
+
+MIT

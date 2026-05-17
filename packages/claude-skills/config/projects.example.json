@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "defaultMemoryDb": "claude_memory",
+  "projects": {
+    "project-a": {
+      "db": "project-a",
+      "path": "/Users/example/code/project-a",
+      "stack": ["nextjs", "laravel"],
+      "indexLevel": 2,
+      "lastIndexed": null
+    },
+    "project-b": {
+      "db": "project-b",
+      "path": "/Users/example/code/project-b",
+      "stack": ["laravel"],
+      "indexLevel": 2,
+      "lastIndexed": null
+    },
+    "project-c": {
+      "db": "project-c",
+      "path": "/Users/example/code/project-c",
+      "stack": ["nextjs"],
+      "indexLevel": 2,
+      "lastIndexed": null
+    }
+  }
+}

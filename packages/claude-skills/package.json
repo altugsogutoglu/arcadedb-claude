@@ -1,0 +1,45 @@
+{
+  "name": "arcadedb-claude-skills",
+  "version": "0.2.0",
+  "description": "Claude Code plugin: auto-injects ArcadeDB graph context per project, slash commands for decision/query/index/status. Part of the arcadedb-claude suite.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "files": [
+    "dist",
+    "hooks",
+    "skills",
+    "commands",
+    "config",
+    ".claude-plugin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && npm run bundle:hooks",
+    "bundle:hooks": "esbuild src/session-start.ts src/post-tool-use.ts --bundle --platform=node --target=node20 --format=esm --outdir=hooks && chmod +x hooks/session-start.js hooks/post-tool-use.js",
+    "test": "vitest run",
+    "test:unit": "vitest run --exclude tests/session-start.test.ts --exclude tests/post-tool-use.test.ts",
+    "test:watch": "vitest"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "arcadedb-agent-memory": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/altugsogutoglu/arcadedb-claude.git",
+    "directory": "packages/claude-skills"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
