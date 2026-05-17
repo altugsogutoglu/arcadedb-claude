@@ -58,5 +58,9 @@ export const memorySchema: Schema = {
     { name: "FOLLOWS" },
     { name: "ANSWERS" },
     { name: "SUPERSEDES" },
+    { name: "DECIDED_ON" },
+    { name: "BLOCKED_BY" },
+    { name: "FIXED" },
+    { name: "RECOMMENDED_AGAINST" },
   ],
 };
