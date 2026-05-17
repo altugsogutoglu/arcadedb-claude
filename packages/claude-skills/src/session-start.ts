@@ -56,10 +56,6 @@ async function tryStartSession(
 
   const newSessionId = await startSession(client, memoryDb, { repo });
 
-  if (previousSessionId) {
-    await linkFollows(client, memoryDb, newSessionId, previousSessionId);
-  }
-
   const now = new Date().toISOString();
   writeSessionState({
     claudeCodeSessionId,
@@ -72,6 +68,10 @@ async function tryStartSession(
     lastExtractedTurnIdx: 0,
     lastExtractedAt: now,
   });
+
+  if (previousSessionId) {
+    await linkFollows(client, memoryDb, newSessionId, previousSessionId);
+  }
 }
 
 function resolveUserName(cwd: string): string {
