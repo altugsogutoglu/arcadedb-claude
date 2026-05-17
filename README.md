@@ -69,6 +69,27 @@ Apache 2.0 matters because this code goes into your business workflows. GPL-lice
 
 If those concerns don't bind for you, the architecture in this repo is intentionally portable. The HTTP client in `arcadedb-agent-memory` is ~50 lines and could be swapped for any other Cypher-speaking backend.
 
+## Prerequisite: run ArcadeDB
+
+This project is a **client** of an [ArcadeDB](https://github.com/ArcadeData/arcadedb) server you run locally (or wherever). It does not bundle a database. Easiest:
+
+```bash
+docker run -d --name arcadedb \
+  -p 2480:2480 -p 6379:6379 \
+  -e JAVA_OPTS="-Darcadedb.server.rootPassword=changeme" \
+  arcadedata/arcadedb:latest
+```
+
+Or download the standalone JAR from [the releases page](https://github.com/ArcadeData/arcadedb/releases) and run `bin/server.sh`. ArcadeDB is Apache 2.0 licensed, ~256MB RAM footprint, runs as a single process.
+
+Then set credentials in `~/.config/arcadedb/.env`:
+
+```
+ARCADEDB_HTTP_URI=http://localhost:2480
+ARCADEDB_USERNAME=root
+ARCADEDB_ROOT_PASSWORD=changeme
+```
+
 ## Install the Claude Code plugin
 
 Two lines in any Claude Code session:
@@ -126,16 +147,11 @@ await recordDecision(client, "claude_memory", {
 
 ## Quick start
 
-1. **Run ArcadeDB locally.** Easiest: `docker run -d -p 2480:2480 -p 6379:6379 -e JAVA_OPTS="-Darcadedb.server.rootPassword=changeme" arcadedata/arcadedb:latest`. Or [download the binary](https://github.com/ArcadeData/arcadedb/releases) and `bin/server.sh`.
-2. **Configure credentials.** Create `~/.config/arcadedb/.env`:
-   ```
-   ARCADEDB_HTTP_URI=http://localhost:2480
-   ARCADEDB_USERNAME=root
-   ARCADEDB_ROOT_PASSWORD=changeme
-   ```
-3. **Install the plugin** (two lines above).
-4. **Map a project** in `~/.config/arcadedb/projects.json` (example above). Run `/graph-index --auto-migrate` inside that project to populate it.
-5. **Start a new session** in the project. The auto-injected context line confirms it's wired:
+Assuming ArcadeDB is running and the plugin is installed (sections above):
+
+1. **Map a project** in `~/.config/arcadedb/projects.json` (example above).
+2. **Index it** by running `/graph-index --auto-migrate` inside the project directory. The `--auto-migrate` flag creates the project's database and applies schemas on first run.
+3. **Start a new Claude Code session** in the project. The auto-injected context line confirms everything's wired:
    ```
    ArcadeDB context loaded:
      Project: my-app (DB: my_app, indexed: 2026-05-17, 142 files, 89 imports)
