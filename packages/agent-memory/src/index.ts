@@ -12,4 +12,4 @@ export { recordDecision, queryDecisions } from "./memory/decisions.js";
 export type { Decision, DecisionInput } from "./memory/decisions.js";
 export { recordInsight, queryInsights } from "./memory/insights.js";
 export type { Insight, InsightInput } from "./memory/insights.js";
-export { startSession, endSession, findLatestSessionForRepo } from "./memory/sessions.js";
+export { startSession, endSession, findLatestSessionForRepo, linkFollows, linkDuring } from "./memory/sessions.js";

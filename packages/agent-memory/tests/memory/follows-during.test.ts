@@ -5,6 +5,8 @@ import {
   startSession,
   endSession,
   findLatestSessionForRepo,
+  linkFollows,
+  linkDuring,
 } from "../../src/memory/sessions.js";
 import { createTempDb, env, type TempDb } from "../helpers/temp-db.js";
 
@@ -50,5 +52,63 @@ describe("findLatestSessionForRepo", () => {
 
     const withoutExclude = await findLatestSessionForRepo(client, db.name, "repo-exclude");
     expect(withoutExclude).toBe(newer);
+  });
+});
+
+describe("linkFollows", () => {
+  it("creates a :FOLLOWS edge between two sessions", async () => {
+    const a = await startSession(client, db.name, { repo: "follow-a" });
+    const b = await startSession(client, db.name, { repo: "follow-a" });
+    await linkFollows(client, db.name, b, a);
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (later:Session {id: '${b}'})-[r:FOLLOWS]->(earlier:Session {id: '${a}'}) RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(1);
+  });
+
+  it("is idempotent when called twice with the same pair", async () => {
+    const a = await startSession(client, db.name, { repo: "follow-b" });
+    const b = await startSession(client, db.name, { repo: "follow-b" });
+    await linkFollows(client, db.name, b, a);
+    await linkFollows(client, db.name, b, a);
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (:Session {id: '${b}'})-[r:FOLLOWS]->(:Session {id: '${a}'}) RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(1);
+  });
+});
+
+describe("linkDuring", () => {
+  it("creates a :DURING edge from a memory node to a session", async () => {
+    const sess = await startSession(client, db.name, { repo: "during-a" });
+    const decisionId = "11111111-1111-1111-1111-111111111111";
+    await client.execute(db.name, "cypher",
+      `CREATE (d:Decision {id:'${decisionId}', summary:'s', rationale:'r', decidedAt:datetime('2026-05-17T00:00:00Z'), repo:'during-a'})`);
+    await linkDuring(client, db.name, "Decision", decisionId, sess);
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (:Decision {id:'${decisionId}'})-[r:DURING]->(:Session {id:'${sess}'}) RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(1);
+  });
+
+  it("is idempotent", async () => {
+    const sess = await startSession(client, db.name, { repo: "during-b" });
+    const insightId = "22222222-2222-2222-2222-222222222222";
+    await client.execute(db.name, "cypher",
+      `CREATE (i:Insight {id:'${insightId}', topic:'t', text:'x', createdAt:datetime('2026-05-17T00:00:00Z')})`);
+    await linkDuring(client, db.name, "Insight", insightId, sess);
+    await linkDuring(client, db.name, "Insight", insightId, sess);
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (:Insight {id:'${insightId}'})-[r:DURING]->(:Session {id:'${sess}'}) RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(1);
   });
 });

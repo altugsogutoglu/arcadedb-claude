@@ -38,3 +38,40 @@ export async function findLatestSessionForRepo(
 function cypherStr(s: string): string {
   return `'${s.replace(/'/g, "\\'")}'`;
 }
+
+/**
+ * Create (later)-[:FOLLOWS]->(earlier) between two existing :Session nodes.
+ * Uses MERGE so calling twice produces a single edge.
+ */
+export async function linkFollows(
+  client: Client,
+  db: string,
+  laterSessionId: string,
+  earlierSessionId: string,
+): Promise<void> {
+  const cypher = `
+    MATCH (later:Session {id: ${cypherStr(laterSessionId)}}),
+          (earlier:Session {id: ${cypherStr(earlierSessionId)}})
+    MERGE (later)-[:FOLLOWS]->(earlier)
+  `;
+  await client.execute(db, "cypher", cypher);
+}
+
+/**
+ * Attach a memory node (Decision/Insight/Question/Answer) to a Session
+ * via :DURING. Idempotent.
+ */
+export async function linkDuring(
+  client: Client,
+  db: string,
+  nodeLabel: "Decision" | "Insight" | "Question" | "Answer",
+  nodeId: string,
+  sessionId: string,
+): Promise<void> {
+  const cypher = `
+    MATCH (n:${nodeLabel} {id: ${cypherStr(nodeId)}}),
+          (s:Session {id: ${cypherStr(sessionId)}})
+    MERGE (n)-[:DURING]->(s)
+  `;
+  await client.execute(db, "cypher", cypher);
+}
