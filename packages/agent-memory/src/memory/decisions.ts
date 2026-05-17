@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "../client.js";
+import { linkDuring } from "./sessions.js";
 
 export interface DecisionInput {
   summary: string;
   rationale: string;
   repo: string;
+  sessionId?: string;
 }
 
 export interface Decision {
@@ -27,6 +29,9 @@ export async function recordDecision(client: Client, db: string, input: Decision
     })
   `;
   await client.execute(db, "cypher", cypher);
+  if (input.sessionId) {
+    await linkDuring(client, db, "Decision", id, input.sessionId);
+  }
   return id;
 }
 

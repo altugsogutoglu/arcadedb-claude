@@ -138,3 +138,48 @@ describe("linkDuring", () => {
     expect(rows[0]?.["count(r)"]).toBe(0);
   });
 });
+
+import { recordDecision } from "../../src/memory/decisions.js";
+import { recordInsight } from "../../src/memory/insights.js";
+
+describe("recordDecision/recordInsight with sessionId", () => {
+  it("auto-links recordDecision to a Session via :DURING when sessionId given", async () => {
+    const sess = await startSession(client, db.name, { repo: "auto-link" });
+    const dId = await recordDecision(client, db.name, {
+      summary: "Use ArcadeDB", rationale: "graph + license", repo: "auto-link",
+      sessionId: sess,
+    });
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (:Decision {id:'${dId}'})-[r:DURING]->(:Session {id:'${sess}'}) RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(1);
+  });
+
+  it("auto-links recordInsight to a Session via :DURING when sessionId given", async () => {
+    const sess = await startSession(client, db.name, { repo: "auto-link" });
+    const iId = await recordInsight(client, db.name, {
+      topic: "T", text: "Body of the insight", repo: "auto-link",
+      sessionId: sess,
+    });
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (:Insight {id:'${iId}'})-[r:DURING]->(:Session {id:'${sess}'}) RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(1);
+  });
+
+  it("omits :DURING when no sessionId given (backwards compatible)", async () => {
+    const dId = await recordDecision(client, db.name, {
+      summary: "no session", rationale: "rationale", repo: "auto-link",
+    });
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (:Decision {id:'${dId}'})-[r:DURING]->() RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(0);
+  });
+});
