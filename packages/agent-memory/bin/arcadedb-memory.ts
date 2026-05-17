@@ -33,8 +33,9 @@ async function main(): Promise<number> {
       const rationale = flag("rationale") ?? "";
       const repo = flag("repo") ?? "";
       const db = flag("db") ?? "claude_memory";
-      if (!summary || !repo) { console.error("usage: arcadedb-memory record-decision <summary> --rationale <text> --repo <name> [--db claude_memory]"); return 1; }
-      const id = await recordDecision(client, db, { summary, rationale, repo });
+      const sessionId = flag("session") ?? process.env["ARCADEDB_SESSION_ID"];
+      if (!summary || !repo) { console.error("usage: arcadedb-memory record-decision <summary> --rationale <text> --repo <name> [--session <id>] [--db claude_memory]"); return 1; }
+      const id = await recordDecision(client, db, { summary, rationale, repo, sessionId });
       console.log(id);
       return 0;
     }
@@ -43,8 +44,9 @@ async function main(): Promise<number> {
       const text = flag("text") ?? "";
       const repo = flag("repo");
       const db = flag("db") ?? "claude_memory";
-      if (!topic || !text) { console.error("usage: arcadedb-memory record-insight <topic> --text <text> [--repo <name>] [--db claude_memory]"); return 1; }
-      const id = await recordInsight(client, db, { topic, text, repo });
+      const sessionId = flag("session") ?? process.env["ARCADEDB_SESSION_ID"];
+      if (!topic || !text) { console.error("usage: arcadedb-memory record-insight <topic> --text <text> [--repo <name>] [--session <id>] [--db claude_memory]"); return 1; }
+      const id = await recordInsight(client, db, { topic, text, repo, sessionId });
       console.log(id);
       return 0;
     }
