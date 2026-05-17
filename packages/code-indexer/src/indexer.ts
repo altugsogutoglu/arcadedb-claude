@@ -7,11 +7,14 @@ import { detectModule } from "./modules.js";
 import { parseTsImports } from "./parsers/ts-imports.js";
 import { parsePhpImports } from "./parsers/php-imports.js";
 import { resolveRelative, resolvePsr4, type Psr4Map } from "./resolvers/path.js";
+import { findTsconfigs, tsconfigForFile, resolveAlias, type TsconfigPaths } from "./resolvers/tsconfig.js";
+import { findComposers, composerForFile, type ComposerPsr4 } from "./resolvers/composer.js";
 import { upsertRepo, upsertModule, upsertFile, linkContains, linkImports } from "./writer.js";
 
 export interface IndexOptions {
   db: string;
   autoMigrate?: boolean;
+  /** Override PSR-4 map for PHP imports. Defaults to auto-detected from composer.json files. */
   psr4?: Psr4Map;
   stack?: string;
   /** Extra directory names to exclude on top of DEFAULT_EXCLUDES. */
@@ -39,8 +42,6 @@ export async function indexRepo(
     await applySchemas(client, options.db, ["core", "code"]);
   }
 
-  const psr4 = options.psr4 ?? defaultPsr4(repoName);
-
   await upsertRepo(client, options.db, {
     name: repoName,
     path: root,
@@ -50,6 +51,9 @@ export async function indexRepo(
   const excludes = new Set(options.noDefaultExcludes ? [] : DEFAULT_EXCLUDES);
   for (const e of options.extraExcludes ?? []) excludes.add(e);
   const files = await walkRepo(root, { excludes });
+
+  const tsconfigs = await findTsconfigs(root, files);
+  const composers = await findComposers(root, files);
 
   const fileLanguages = new Map<string, "ts" | "js" | "php" | "other">();
   const moduleNames = new Set<string>();
@@ -102,8 +106,8 @@ export async function indexRepo(
 
     for (const spec of specs) {
       const resolved = lang === "php"
-        ? resolvePsr4(spec, psr4)
-        : resolveRelativeToFile(rel, spec, knownFiles);
+        ? resolvePhpImport(spec, rel, composers, options.psr4, knownFiles)
+        : resolveTsImport(spec, rel, tsconfigs, knownFiles);
 
       if (resolved && knownFiles.has(resolved)) {
         const targetQualified = `${repoName}/${resolved}`;
@@ -119,18 +123,59 @@ export async function indexRepo(
   return { repo: repoName, files: files.length, imports: importsCount, unresolved: unresolvedCount };
 }
 
-function resolveRelativeToFile(fromFile: string, spec: string, known: Set<string>): string | null {
-  if (!spec.startsWith(".")) return null;
+function resolveTsImport(
+  spec: string,
+  fromFile: string,
+  tsconfigs: Map<string, TsconfigPaths>,
+  known: Set<string>,
+): string | null {
+  // Try path alias resolution first (handles "@/components/Button")
+  if (!spec.startsWith(".")) {
+    const tsconfig = tsconfigForFile(fromFile, tsconfigs);
+    if (tsconfig) {
+      const aliased = resolveAlias(spec, tsconfig);
+      if (aliased) {
+        const found = resolveWithExtensions(aliased, known);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  // Fall back to relative resolution
   const base = resolveRelative(fromFile, spec);
+  return resolveWithExtensions(base, known);
+}
+
+function resolveWithExtensions(base: string, known: Set<string>): string | null {
   const exts = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
   if (known.has(base)) return base;
   for (const ext of exts) {
     const candidate = `${base}${ext}`;
     if (known.has(candidate)) return candidate;
   }
+  // index files inside a dir
+  for (const ext of exts) {
+    const candidate = `${base}/index${ext}`;
+    if (known.has(candidate)) return candidate;
+  }
   return null;
 }
 
-function defaultPsr4(_repoName: string): Psr4Map {
-  return { "App\\": "app/" };
+function resolvePhpImport(
+  spec: string,
+  fromFile: string,
+  composers: Map<string, ComposerPsr4>,
+  override: Psr4Map | undefined,
+  known: Set<string>,
+): string | null {
+  // Override map wins if provided (testing / explicit user config)
+  if (override) {
+    const candidate = resolvePsr4(spec, override);
+    if (candidate && known.has(candidate)) return candidate;
+  }
+  const composer = composerForFile(fromFile, composers);
+  if (!composer) return null;
+  const candidate = resolvePsr4(spec, composer.psr4);
+  if (candidate && known.has(candidate)) return candidate;
+  return null;
 }

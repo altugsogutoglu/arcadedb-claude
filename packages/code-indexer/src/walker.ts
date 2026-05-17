@@ -21,6 +21,12 @@ export const DEFAULT_EXCLUDES: ReadonlySet<string> = new Set([
   ".nuxt",
   ".svelte-kit",
   ".docusaurus",
+  // React Native / Expo native shells (mostly CocoaPods + Gradle, occasionally code)
+  "ios",
+  "android",
+  ".expo",
+  // Application logs
+  "logs",
   // Caches
   "tmp",
   ".cache",
