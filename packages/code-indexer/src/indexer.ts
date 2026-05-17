@@ -25,7 +25,10 @@ export interface IndexOptions {
 
 export interface IndexSummary {
   repo: string;
+  /** Number of source files written to the graph (excludes non-source like images, lockfiles). */
   files: number;
+  /** Total files walked, including non-source. */
+  totalFiles: number;
   imports: number;
   unresolved: number;
 }
@@ -57,11 +60,13 @@ export async function indexRepo(
 
   const fileLanguages = new Map<string, "ts" | "js" | "php" | "other">();
   const moduleNames = new Set<string>();
+  let indexedFileCount = 0;
 
   for (const rel of files) {
     const lang = detectLanguage(rel);
     fileLanguages.set(rel, lang);
     if (lang === "other") continue;
+    indexedFileCount++;
 
     const fullPath = join(root, rel);
     const source = await readFile(fullPath, "utf8");
@@ -120,7 +125,13 @@ export async function indexRepo(
     }
   }
 
-  return { repo: repoName, files: files.length, imports: importsCount, unresolved: unresolvedCount };
+  return {
+    repo: repoName,
+    files: indexedFileCount,
+    totalFiles: files.length,
+    imports: importsCount,
+    unresolved: unresolvedCount,
+  };
 }
 
 function resolveTsImport(

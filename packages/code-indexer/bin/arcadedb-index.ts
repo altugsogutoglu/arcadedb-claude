@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { Client, loadEnv } from "arcadedb-agent-memory";
 import { indexRepo } from "../src/indexer.js";
+import { markProjectIndexed } from "../src/projects-config.js";
 
 const argv = process.argv.slice(2);
 const [target, ...rest] = argv;
@@ -35,8 +36,9 @@ async function main(): Promise<number> {
   const excludeArg = flag("exclude");
   const extraExcludes = excludeArg ? excludeArg.split(",").map(s => s.trim()).filter(Boolean) : undefined;
 
+  const rootPath = resolve(target);
   const client = new Client(loadEnv());
-  const summary = await indexRepo(client, resolve(target), {
+  const summary = await indexRepo(client, rootPath, {
     db,
     autoMigrate: bool("auto-migrate"),
     stack: flag("stack"),
@@ -44,7 +46,13 @@ async function main(): Promise<number> {
     noDefaultExcludes: bool("no-default-excludes"),
   });
 
-  console.log(`indexed ${summary.repo}: ${summary.files} files, ${summary.imports} imports, ${summary.unresolved} unresolved`);
+  const matched = markProjectIndexed(db, rootPath);
+  const skipped = summary.totalFiles - summary.files;
+  const skippedNote = skipped > 0 ? ` (${skipped} non-source skipped)` : "";
+  console.log(`indexed ${summary.repo}: ${summary.files} files${skippedNote}, ${summary.imports} imports, ${summary.unresolved} unresolved`);
+  if (matched) {
+    console.log(`updated projects.json: ${matched}.lastIndexed`);
+  }
   return 0;
 }
 

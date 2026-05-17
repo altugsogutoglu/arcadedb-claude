@@ -7,8 +7,10 @@ allowed-tools: Bash
 # arcadedb-graph: Query the ArcadeDB Graph
 
 This project has an ArcadeDB graph with two databases:
-- The **project graph** (named in `~/.config/arcadedb/projects.json`) holds code intelligence: `:Repo`, `:Module`, `:File`, `:Function`, `:CONTAINS`, `:IMPORTS`, `:CALLS`.
-- The **memory graph** (default: `claude_memory`) holds agent context: `:Decision`, `:Insight`, `:Session`, `:Question`, `:Answer`.
+- The **project graph** (named in `~/.config/arcadedb/projects.json`) holds code intelligence: `:Repo`, `:Module`, `:File`, `:Class`, `:Function`, `:Route`, `:Component`, `:Person`; edges `:CONTAINS`, `:IMPORTS`, `:CALLS`, `:EXTENDS`, `:IMPLEMENTS`, `:HANDLES`, `:RENDERS`.
+- The **memory graph** (default: `claude_memory`) holds agent context: `:Decision`, `:Insight`, `:Session`, `:Question`, `:Answer`; edges `:ABOUT`, `:DURING`, `:FOLLOWS`, `:ANSWERS`, `:SUPERSEDES`.
+
+Run `mcp__arcadedb__get_schema database=<db-name>` (or `/graph-status`) to confirm which types actually exist in your DB — the indexer only writes types the parser populates, so `:Function`/`:Class`/`:Route`/`:Component` may be absent until call-graph / route extraction lands.
 
 Use the graph instead of reading files when the question is structural ("how does X work", "what calls X") or memory-related ("decisions about X", "have we tried Y before").
 
@@ -53,12 +55,33 @@ After a non-obvious decision in conversation, use `/graph-decision "<summary>" -
 
 | Vertex type | Domain | Key properties |
 |---|---|---|
-| `:Repo` | code | `name`, `path`, `stack`, `lastIndexedAt` |
-| `:Module` | code | `name`, `path`, `language` |
-| `:File` | code | `path`, `language`, `loc` |
-| `:Function` | code | `name`, `signature`, `async`, `exported` |
-| `:Decision` | memory | `id`, `summary`, `rationale`, `decidedAt`, `repo` |
-| `:Insight` | memory | `id`, `topic`, `text`, `createdAt`, `repo` |
-| `:Session` | memory | `id`, `startedAt`, `endedAt`, `repo` |
+| `:Repo` | core | `name` (pk), `path`, `stack`, `lastIndexedAt` |
+| `:Person` | core | `name` (pk), `email`, `role` |
+| `:Module` | code | `name`, `path` (pk), `language` |
+| `:File` | code | `path` (pk), `language`, `loc`, `hash`, `modifiedAt` |
+| `:Class` | code | `name`, `kind`, `exported` |
+| `:Function` | code | `name`, `signature`, `async`, `exported`, `kind` |
+| `:Route` | code | `path`, `method`, `framework` |
+| `:Component` | code | `name`, `path`, `kind` |
+| `:Session` | memory | `id` (pk), `startedAt`, `endedAt`, `repo`, `summary` |
+| `:Decision` | memory | `id` (pk), `summary`, `rationale`, `decidedAt`, `repo` |
+| `:Insight` | memory | `id` (pk), `topic`, `text`, `createdAt`, `repo` |
+| `:Question` | memory | `id` (pk), `text`, `askedAt`, `repo` |
+| `:Answer` | memory | `id` (pk), `text`, `answeredAt`, `confidence` |
 
-Edge types: `:CONTAINS`, `:IMPORTS`, `:CALLS`, `:EXTENDS`, `:ABOUT`, `:DURING`, `:FOLLOWS`, `:ANSWERS`, `:SUPERSEDES`.
+| Edge type | Domain | Typical pattern |
+|---|---|---|
+| `:CONTAINS` | code | `(:Repo)-[:CONTAINS]->(:Module)-[:CONTAINS]->(:File)` |
+| `:IMPORTS` | code | `(:File)-[:IMPORTS]->(:File)` |
+| `:CALLS` | code | `(:Function)-[:CALLS]->(:Function)` |
+| `:EXTENDS` | code | `(:Class)-[:EXTENDS]->(:Class)` |
+| `:IMPLEMENTS` | code | `(:Class)-[:IMPLEMENTS]->(:Class)` |
+| `:HANDLES` | code | `(:Function)-[:HANDLES]->(:Route)` |
+| `:RENDERS` | code | `(:Component)-[:RENDERS]->(:Component)` |
+| `:ABOUT` | memory | `(:Decision|:Insight|:Question)-[:ABOUT]->(:Repo|:File|...)` |
+| `:DURING` | memory | `(:Decision|:Insight)-[:DURING]->(:Session)` |
+| `:FOLLOWS` | memory | `(:Session)-[:FOLLOWS]->(:Session)` |
+| `:ANSWERS` | memory | `(:Answer)-[:ANSWERS]->(:Question)` |
+| `:SUPERSEDES` | memory | `(:Decision)-[:SUPERSEDES]->(:Decision)` |
+
+The `business` (`:Store`, `:Product`, `:Category`, `:Order`, `:Customer`, `:Concept`; edges `:SELLS`, `:BELONGS_TO`, `:PLACED`, `:CONTAINS_PRODUCT`) and `notes` (`:Note`, `:Tag`; edges `:LINKS_TO`, `:TAGGED`, `:MENTIONS`) domains exist as optional schemas — apply with `arcadedb-memory migrate <db> --domains business,notes` if needed.
