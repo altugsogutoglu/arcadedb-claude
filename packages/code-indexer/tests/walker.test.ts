@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { walkRepo } from "../src/walker.js";
+import { walkRepo, DEFAULT_EXCLUDES } from "../src/walker.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const nextjsRoot = resolve(__dirname, "fixtures/tiny-nextjs");
@@ -36,5 +36,33 @@ describe("walkRepo", () => {
     const files = await walkRepo(nextjsRoot);
     const sorted = [...files].sort();
     expect(files).toEqual(sorted);
+  });
+
+  it("DEFAULT_EXCLUDES covers common build, cache, and archive dirs", () => {
+    // Build outputs
+    expect(DEFAULT_EXCLUDES.has("dist")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has("build")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has("out")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has(".next")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has(".nuxt")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has(".svelte-kit")).toBe(true);
+    // Caches
+    expect(DEFAULT_EXCLUDES.has("tmp")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has(".cache")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has(".phpunit.cache")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has("__pycache__")).toBe(true);
+    // Package managers
+    expect(DEFAULT_EXCLUDES.has("node_modules")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has("vendor")).toBe(true);
+    // Archive convention
+    expect(DEFAULT_EXCLUDES.has("archive")).toBe(true);
+    expect(DEFAULT_EXCLUDES.has("archives")).toBe(true);
+  });
+
+  it("honors a custom excludes set, replacing defaults", async () => {
+    // Empty set means walk everything (including node_modules if present)
+    const files = await walkRepo(nextjsRoot, { excludes: new Set() });
+    // Fixture doesn't actually have node_modules; just verify the option threads through
+    expect(files.length).toBeGreaterThan(0);
   });
 });

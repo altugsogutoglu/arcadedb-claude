@@ -1,16 +1,42 @@
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 
-const DEFAULT_EXCLUDES = new Set([
-  "node_modules",
+export const DEFAULT_EXCLUDES: ReadonlySet<string> = new Set([
+  // Version control
   ".git",
-  "dist",
-  ".next",
+  ".svn",
+  ".hg",
+  // Package managers
+  "node_modules",
   "vendor",
+  ".pnpm",
+  ".yarn",
+  // Build / dist outputs
+  "dist",
   "build",
-  "coverage",
-  ".turbo",
+  "out",
+  "target",
+  "obj",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".docusaurus",
+  // Caches
+  "tmp",
   ".cache",
+  ".turbo",
+  ".parcel-cache",
+  ".phpunit.cache",
+  ".pytest_cache",
+  "__pycache__",
+  "coverage",
+  ".nyc_output",
+  // Editor / IDE
+  ".idea",
+  ".vscode",
+  // User-archived code (common convention in monorepos)
+  "archive",
+  "archives",
 ]);
 
 export interface WalkOptions {
@@ -18,7 +44,7 @@ export interface WalkOptions {
 }
 
 export async function walkRepo(root: string, options: WalkOptions = {}): Promise<string[]> {
-  const excludes = options.excludes ?? DEFAULT_EXCLUDES;
+  const excludes = options.excludes ?? new Set(DEFAULT_EXCLUDES);
   const out: string[] = [];
   await walk(root, root, excludes, out);
   out.sort();

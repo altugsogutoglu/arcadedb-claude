@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Client, applySchemas } from "arcadedb-agent-memory";
-import { walkRepo } from "./walker.js";
+import { walkRepo, DEFAULT_EXCLUDES } from "./walker.js";
 import { detectLanguage } from "./languages.js";
 import { detectModule } from "./modules.js";
 import { parseTsImports } from "./parsers/ts-imports.js";
@@ -14,6 +14,10 @@ export interface IndexOptions {
   autoMigrate?: boolean;
   psr4?: Psr4Map;
   stack?: string;
+  /** Extra directory names to exclude on top of DEFAULT_EXCLUDES. */
+  extraExcludes?: string[];
+  /** If true, skip DEFAULT_EXCLUDES entirely and use only `extraExcludes`. */
+  noDefaultExcludes?: boolean;
 }
 
 export interface IndexSummary {
@@ -43,7 +47,9 @@ export async function indexRepo(
     stack: options.stack ?? "unknown",
   });
 
-  const files = await walkRepo(root);
+  const excludes = new Set(options.noDefaultExcludes ? [] : DEFAULT_EXCLUDES);
+  for (const e of options.extraExcludes ?? []) excludes.add(e);
+  const files = await walkRepo(root, { excludes });
 
   const fileLanguages = new Map<string, "ts" | "js" | "php" | "other">();
   const moduleNames = new Set<string>();
