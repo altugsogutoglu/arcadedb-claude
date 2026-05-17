@@ -4,8 +4,12 @@ import { promisify } from "node:util";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { Client, applySchemas, recordDecision, recordInsight } from "arcadedb-agent-memory";
 import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
+
+const require = createRequire(import.meta.url);
+const tsxBin = require.resolve("tsx/cli");
 
 const exec = promisify(execFile);
 const client = new Client(env);
@@ -56,7 +60,7 @@ describe("session-start hook", () => {
       "project-a": { db: projectDb.name, path: "/some/path/project-a", stack: ["nextjs"], indexLevel: 2, lastIndexed: null },
     }, memoryDb.name);
 
-    const { stdout } = await exec("./node_modules/.bin/tsx", ["src/session-start.ts"], {
+    const { stdout } = await exec(process.execPath, [tsxBin, "src/session-start.ts"], {
       env: { ...process.env, HOME: tmpHome, PWD: "/elsewhere/project-a" },
       cwd: process.cwd(),
     });
@@ -69,7 +73,7 @@ describe("session-start hook", () => {
   it("outputs memory-only context when no project matches", async () => {
     writeConfig({}, memoryDb.name);
 
-    const { stdout } = await exec("./node_modules/.bin/tsx", ["src/session-start.ts"], {
+    const { stdout } = await exec(process.execPath, [tsxBin, "src/session-start.ts"], {
       env: { ...process.env, HOME: tmpHome, PWD: "/random/dir" },
       cwd: process.cwd(),
     });
@@ -80,7 +84,7 @@ describe("session-start hook", () => {
 
   it("exits 0 silently on DB unreachable (does not crash)", async () => {
     writeConfig({}, "definitely_missing_db_for_session_start_test");
-    const { stdout, stderr } = await exec("./node_modules/.bin/tsx", ["src/session-start.ts"], {
+    const { stdout, stderr } = await exec(process.execPath, [tsxBin, "src/session-start.ts"], {
       env: { ...process.env, HOME: tmpHome, PWD: "/random/dir" },
       cwd: process.cwd(),
     });

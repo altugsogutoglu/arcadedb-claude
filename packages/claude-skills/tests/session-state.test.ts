@@ -58,6 +58,24 @@ describe("session-state", () => {
     expect(existsSync(join(tmpHome, ".config", "arcadedb", "sessions", "cc-xyz.json"))).toBe(true);
   });
 
+  it("writeSessionState overwrites and readSessionState returns the updated value", () => {
+    const original: SessionState = {
+      claudeCodeSessionId: "cc-update",
+      sessionDbId: "id-1",
+      repo: "r",
+      cwd: "/x",
+      userName: "u",
+      startedAt: "2026-05-17T12:00:00.000Z",
+      currentTurnIdx: 0,
+      lastExtractedTurnIdx: 0,
+      lastExtractedAt: "2026-05-17T12:00:00.000Z",
+    };
+    writeSessionState(original);
+    const updated: SessionState = { ...original, currentTurnIdx: 5, lastExtractedTurnIdx: 3 };
+    writeSessionState(updated);
+    expect(readSessionState("cc-update")).toEqual(updated);
+  });
+
   it("readSessionState returns null on malformed JSON (does not throw)", () => {
     writeSessionState({
       claudeCodeSessionId: "cc-bad",
