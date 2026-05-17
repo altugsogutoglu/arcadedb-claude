@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run bundle:hooks",
-    "bundle:hooks": "esbuild src/session-start.ts src/post-tool-use.ts --bundle --platform=node --target=node20 --format=esm --outdir=hooks && chmod +x hooks/session-start.js hooks/post-tool-use.js",
+    "bundle:hooks": "esbuild src/session-start.ts src/post-tool-use.ts src/session-end.ts --bundle --platform=node --target=node20 --format=esm --outdir=hooks && chmod +x hooks/session-start.js hooks/post-tool-use.js hooks/session-end.js",
     "test": "vitest run",
     "test:unit": "vitest run --exclude tests/session-start.test.ts --exclude tests/post-tool-use.test.ts",
     "test:watch": "vitest"
