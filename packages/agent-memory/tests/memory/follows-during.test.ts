@@ -39,4 +39,16 @@ describe("findLatestSessionForRepo", () => {
     const found = await findLatestSessionForRepo(client, db.name, "repo-target");
     expect(found).toBe(target);
   });
+
+  it("respects excludeId by skipping the excluded session", async () => {
+    const older = await startSession(client, db.name, { repo: "repo-exclude" });
+    await new Promise(r => setTimeout(r, 20));
+    const newer = await startSession(client, db.name, { repo: "repo-exclude" });
+
+    const withExclude = await findLatestSessionForRepo(client, db.name, "repo-exclude", newer);
+    expect(withExclude).toBe(older);
+
+    const withoutExclude = await findLatestSessionForRepo(client, db.name, "repo-exclude");
+    expect(withoutExclude).toBe(newer);
+  });
 });
