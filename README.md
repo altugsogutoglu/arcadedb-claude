@@ -69,7 +69,11 @@ Apache 2.0 matters because this code goes into your business workflows. GPL-lice
 
 If those concerns don't bind for you, the architecture in this repo is intentionally portable. The HTTP client in `arcadedb-agent-memory` is ~50 lines and could be swapped for any other Cypher-speaking backend.
 
-## Prerequisite: run ArcadeDB
+## Getting started
+
+Three steps total. End-to-end in under five minutes on a fresh machine.
+
+### Step 1 — Run ArcadeDB
 
 This project is a **client** of an [ArcadeDB](https://github.com/ArcadeData/arcadedb) server you run locally (or wherever). It does not bundle a database. Easiest:
 
@@ -82,15 +86,7 @@ docker run -d --name arcadedb \
 
 Or download the standalone JAR from [the releases page](https://github.com/ArcadeData/arcadedb/releases) and run `bin/server.sh`. ArcadeDB is Apache 2.0 licensed, ~256MB RAM footprint, runs as a single process.
 
-Then set credentials in `~/.config/arcadedb/.env`:
-
-```
-ARCADEDB_HTTP_URI=http://localhost:2480
-ARCADEDB_USERNAME=root
-ARCADEDB_ROOT_PASSWORD=changeme
-```
-
-## Install the Claude Code plugin
+### Step 2 — Install the Claude Code plugin
 
 Two lines in any Claude Code session:
 
@@ -99,31 +95,46 @@ Two lines in any Claude Code session:
 /plugin install arcadedb-claude-skills@arcadedb-claude
 ```
 
-That's it. The plugin's hooks are pre-bundled with esbuild as standalone JS files — **no `npm install` runs at plugin install time, no global `$PATH` setup is required, no sibling repos need to exist**.
+The plugin's hooks are pre-bundled with esbuild as standalone JS files — **no `npm install` runs at plugin install time, no global `$PATH` setup is required, no sibling repos need to exist**.
 
-You then map your projects in `~/.config/arcadedb/projects.json`:
+### Step 3 — Run `/arcadedb-init` inside your project
 
-```json
-{
-  "version": 1,
-  "defaultMemoryDb": "claude_memory",
-  "projects": {
-    "my-app": {
-      "db": "my_app",
-      "path": "/Users/you/code/my-app",
-      "stack": ["nextjs"],
-      "indexLevel": 2,
-      "lastIndexed": null
-    }
-  }
-}
+```
+cd ~/code/my-app
+claude
+> /arcadedb-init
 ```
 
-And the plugin auto-injects graph context every time you start a session in `~/code/my-app`.
+The command:
+1. Detects the running ArcadeDB server (or tells you how to start one).
+2. Prompts for credentials and writes `~/.config/arcadedb/.env` (`chmod 600`).
+3. Registers `my-app` in `~/.config/arcadedb/projects.json` (auto-detects basename, path, sane db name).
+4. Creates the shared `claude_memory` database if it doesn't exist yet.
+5. Offers to run `/graph-index --auto-migrate` right after to populate the project's code graph.
 
-## Install the CLIs and libraries
+Re-running `/arcadedb-init` from any other project just appends that project's entry. The `.env` step is skipped if already written.
 
-For non-plugin use (other agents, scripts, CI, your own tooling):
+That's it. Future sessions in any registered project auto-inject context on startup:
+
+```
+ArcadeDB context loaded:
+  Project: my-app (DB: my_app, indexed: 2026-05-17, 142 files, 89 imports)
+  Memory DB: claude_memory (12 decisions, 47 insights)
+```
+
+## Slash commands
+
+| Command | Use |
+|---|---|
+| `/arcadedb-init` | First-run setup. Writes `.env`, registers the current project, creates `claude_memory`. Idempotent. |
+| `/graph-status` | Shows ArcadeDB databases, type counts, project mappings |
+| `/graph-index` | Indexes the current project's codebase into its graph DB |
+| `/graph-decision <summary>` | Records a `:Decision` node with rationale, tied to the current repo |
+| `/graph-query <question>` | Translates a natural-language question into a Cypher query and returns the result |
+
+## Install the CLIs and libraries (for non-plugin use)
+
+For other agents (Cursor, Aider, custom SDK agents), scripts, CI, your own tooling:
 
 ```bash
 npm install -g arcadedb-agent-memory   # ships the `arcadedb-memory` CLI
@@ -145,18 +156,35 @@ await recordDecision(client, "claude_memory", {
 });
 ```
 
-## Quick start
+## Config files written by `/arcadedb-init`
 
-Assuming ArcadeDB is running and the plugin is installed (sections above):
+You can edit these by hand if you prefer.
 
-1. **Map a project** in `~/.config/arcadedb/projects.json` (example above).
-2. **Index it** by running `/graph-index --auto-migrate` inside the project directory. The `--auto-migrate` flag creates the project's database and applies schemas on first run.
-3. **Start a new Claude Code session** in the project. The auto-injected context line confirms everything's wired:
-   ```
-   ArcadeDB context loaded:
-     Project: my-app (DB: my_app, indexed: 2026-05-17, 142 files, 89 imports)
-     Memory DB: claude_memory (12 decisions, 47 insights)
-   ```
+`~/.config/arcadedb/.env` — credentials, `chmod 600`:
+```
+ARCADEDB_HTTP_URI=http://localhost:2480
+ARCADEDB_USERNAME=root
+ARCADEDB_ROOT_PASSWORD=changeme
+```
+
+`~/.config/arcadedb/projects.json` — project-to-database map:
+```json
+{
+  "version": 1,
+  "defaultMemoryDb": "claude_memory",
+  "projects": {
+    "my-app": {
+      "db": "my_app",
+      "path": "/Users/you/code/my-app",
+      "stack": ["nextjs"],
+      "indexLevel": 2,
+      "lastIndexed": null
+    }
+  }
+}
+```
+
+The plugin matches the current session's working directory against projects by (1) exact path, (2) basename, (3) git remote origin name.
 
 ## Use cases
 
@@ -165,15 +193,6 @@ Assuming ArcadeDB is running and the plugin is installed (sections above):
 - **Cross-project pattern discovery.** "Have we used this Stripe webhook pattern before?" returns matching `:Insight` nodes filed from earlier sessions.
 - **Obsidian as agent context.** Your handwritten notes in `~/vault/projects/x.md` are queryable graph nodes, not just text files.
 - **Onboarding.** A new agent session (or a new teammate's agent) gets the same accumulated context the original session built up.
-
-## Slash commands (from the Claude Code plugin)
-
-| Command | Use |
-|---|---|
-| `/graph-status` | Shows ArcadeDB databases, type counts, project mappings |
-| `/graph-index` | Indexes the current project's codebase into its graph DB |
-| `/graph-decision <summary>` | Records a `:Decision` node with rationale, tied to the current repo |
-| `/graph-query <question>` | Translates a natural-language question into a Cypher query and returns the result |
 
 ## Repository layout
 
