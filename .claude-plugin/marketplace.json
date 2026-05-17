@@ -12,7 +12,7 @@
     {
       "name": "arcadedb-claude-skills",
       "source": "./packages/claude-skills",
-      "description": "Auto-inject ArcadeDB graph context per project; slash commands for decisions, queries, indexing, and status. Pre-bundled hooks — no npm install required.",
+      "description": "Auto-inject ArcadeDB graph context per project; slash commands for decisions, queries, indexing, and status. Pre-bundled hooks, no npm install required.",
       "version": "0.2.0",
       "strict": true
     }
