@@ -7,6 +7,7 @@ export async function applySchemas(
   database: string,
   domains?: SchemaDomain[],
 ): Promise<void> {
+  await ensureDatabase(client, database);
   const selected = domains ?? (Object.keys(allSchemas) as SchemaDomain[]);
   for (const domain of selected) {
     const schema = allSchemas[domain];
@@ -16,4 +17,10 @@ export async function applySchemas(
       await client.execute(database, "sql", stmt);
     }
   }
+}
+
+async function ensureDatabase(client: Client, database: string): Promise<void> {
+  const existing = await client.listDatabases();
+  if (existing.includes(database)) return;
+  await client.command(`create database ${database}`);
 }

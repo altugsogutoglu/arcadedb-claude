@@ -3,7 +3,7 @@ import type { Client } from "arcadedb-agent-memory";
 function q(s: string | number | undefined | null): string {
   if (s === undefined || s === null) return "null";
   if (typeof s === "number") return String(s);
-  return `'${String(s).replace(/'/g, "\\'")}'`;
+  return `'${String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
 export interface RepoInput { name: string; path: string; stack?: string }
