@@ -80,6 +80,18 @@ describe("linkFollows", () => {
     );
     expect(rows[0]?.["count(r)"]).toBe(1);
   });
+
+  it("no-ops silently when either session id does not exist", async () => {
+    const real = await startSession(client, db.name, { repo: "follow-noop" });
+    // pass a nonexistent id as the "earlier" session — MATCH finds nothing, MERGE is never evaluated
+    await expect(linkFollows(client, db.name, real, "nonexistent-session-id")).resolves.toBeUndefined();
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (:Session {id: '${real}'})-[r:FOLLOWS]->() RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(0);
+  });
 });
 
 describe("linkDuring", () => {
@@ -110,5 +122,19 @@ describe("linkDuring", () => {
       `MATCH (:Insight {id:'${insightId}'})-[r:DURING]->(:Session {id:'${sess}'}) RETURN count(r)`,
     );
     expect(rows[0]?.["count(r)"]).toBe(1);
+  });
+
+  it("no-ops silently when the session id does not exist", async () => {
+    // create an Insight with no matching Session
+    const insightId = "33333333-3333-3333-3333-333333333333";
+    await client.execute(db.name, "cypher",
+      `CREATE (i:Insight {id:'${insightId}', topic:'t', text:'x', createdAt:datetime('2026-05-17T00:00:00Z')})`);
+    await expect(linkDuring(client, db.name, "Insight", insightId, "nonexistent-session-id")).resolves.toBeUndefined();
+    const rows = await client.query<{ "count(r)": number }>(
+      db.name,
+      "cypher",
+      `MATCH (:Insight {id:'${insightId}'})-[r:DURING]->() RETURN count(r)`,
+    );
+    expect(rows[0]?.["count(r)"]).toBe(0);
   });
 });
