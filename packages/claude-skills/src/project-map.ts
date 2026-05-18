@@ -21,10 +21,19 @@ const DEFAULT_MAP: ProjectsMap = {
   projects: {},
 };
 
-export function loadProjects(path: string): ProjectsMap {
-  if (!existsSync(path)) return { ...DEFAULT_MAP };
+export function loadProjects(
+  path: string,
+  onError?: (err: Error) => void,
+): ProjectsMap {
+  if (!existsSync(path)) return { ...DEFAULT_MAP, projects: {} };
   const raw = readFileSync(path, "utf8");
-  const parsed = JSON.parse(raw) as ProjectsMap;
+  let parsed: ProjectsMap;
+  try {
+    parsed = JSON.parse(raw) as ProjectsMap;
+  } catch (err) {
+    onError?.(new Error(`projects.json at ${path} is malformed (${(err as Error).message}); falling back to empty project map.`));
+    return { ...DEFAULT_MAP, projects: {} };
+  }
   if (!parsed.defaultMemoryDb) parsed.defaultMemoryDb = "claude_memory";
   if (!parsed.projects) parsed.projects = {};
   return parsed;

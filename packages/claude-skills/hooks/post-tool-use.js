@@ -25,10 +25,16 @@ var DEFAULT_MAP = {
   defaultMemoryDb: "claude_memory",
   projects: {}
 };
-function loadProjects(path) {
-  if (!existsSync(path)) return { ...DEFAULT_MAP };
+function loadProjects(path, onError) {
+  if (!existsSync(path)) return { ...DEFAULT_MAP, projects: {} };
   const raw = readFileSync(path, "utf8");
-  const parsed = JSON.parse(raw);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    onError?.(new Error(`projects.json at ${path} is malformed (${err.message}); falling back to empty project map.`));
+    return { ...DEFAULT_MAP, projects: {} };
+  }
   if (!parsed.defaultMemoryDb) parsed.defaultMemoryDb = "claude_memory";
   if (!parsed.projects) parsed.projects = {};
   return parsed;
@@ -55,7 +61,7 @@ function extractRemoteName(url) {
 // src/post-tool-use.ts
 async function main() {
   const cwd = process.env["PWD"] ?? process.cwd();
-  const map = loadProjects(projectsJsonPath());
+  const map = loadProjects(projectsJsonPath(), logError);
   const match = findProject(map, cwd, null);
   if (!match) return;
   const stalePath = join2(configDir(), "stale.log");

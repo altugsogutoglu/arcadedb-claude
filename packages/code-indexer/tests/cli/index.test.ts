@@ -26,7 +26,7 @@ describe("CLI: arcadedb-index", () => {
       "--db", db.name,
       "--stack", "nextjs",
     ]);
-    expect(stdout).toMatch(/indexed tiny-nextjs: \d+ files, \d+ imports, \d+ unresolved/);
+    expect(stdout).toMatch(/indexed tiny-nextjs: \d+ files(?: \([^)]*\))?, \d+ imports, \d+ unresolved/);
   });
 
   it("--auto-migrate makes the CLI work against a fresh DB without prior migration", async () => {

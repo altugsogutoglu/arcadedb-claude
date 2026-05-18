@@ -22,7 +22,7 @@ import { writeSessionState } from "./session-state.js";
 async function main(): Promise<void> {
   const cwd = process.env["PWD"] ?? process.cwd();
   const remote = safeGitRemote(cwd);
-  const map = loadProjects(projectsJsonPath());
+  const map = loadProjects(projectsJsonPath(), logError);
   const match = findProject(map, cwd, remote);
 
   const env = loadEnv();

@@ -6,7 +6,7 @@ import { loadProjects, findProject } from "./project-map.js";
 
 async function main(): Promise<void> {
   const cwd = process.env["PWD"] ?? process.cwd();
-  const map = loadProjects(projectsJsonPath());
+  const map = loadProjects(projectsJsonPath(), logError);
   const match = findProject(map, cwd, null);
   if (!match) return;
 

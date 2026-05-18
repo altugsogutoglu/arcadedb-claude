@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   const state = readSessionState(claudeCodeSessionId);
   if (!state) return;
 
-  const map = loadProjects(projectsJsonPath());
+  const map = loadProjects(projectsJsonPath(), logError);
   const env = loadEnv();
   const client = new Client(env);
 

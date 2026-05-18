@@ -26,10 +26,23 @@ describe("loadProjects", () => {
     expect(m.projects).toEqual({});
   });
 
-  it("throws on malformed JSON", () => {
+  it("returns default skeleton and invokes onError on malformed JSON", () => {
     tc = writeTempProjectsJson({} as object);
     writeFileSync(tc.path, "{not json");
-    expect(() => loadProjects(tc.path)).toThrow();
+    const errors: Error[] = [];
+    const m = loadProjects(tc.path, err => errors.push(err));
+    expect(m.defaultMemoryDb).toBe("claude_memory");
+    expect(m.projects).toEqual({});
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toContain(tc.path);
+  });
+
+  it("returns default skeleton silently on malformed JSON when no onError is given", () => {
+    tc = writeTempProjectsJson({} as object);
+    writeFileSync(tc.path, "{not json");
+    const m = loadProjects(tc.path);
+    expect(m.defaultMemoryDb).toBe("claude_memory");
+    expect(m.projects).toEqual({});
   });
 });
 
