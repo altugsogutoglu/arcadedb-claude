@@ -19,4 +19,10 @@ describe("hooks.json", () => {
     const cmd = ptu?.hooks?.find((h: { type: string; command?: string }) => h.type === "command");
     expect(cmd?.command).toMatch(/\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/post-tool-use\.js/);
   });
+
+  it("registers a SessionEnd hook pointing at session-end.js", () => {
+    expect(Array.isArray(cfg.hooks?.SessionEnd)).toBe(true);
+    const cmd = cfg.hooks?.SessionEnd?.[0]?.hooks?.find((h: { type: string; command?: string }) => h.type === "command");
+    expect(cmd?.command).toMatch(/\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/session-end\.js/);
+  });
 });

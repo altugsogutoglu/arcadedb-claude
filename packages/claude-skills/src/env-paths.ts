@@ -12,3 +12,11 @@ export function projectsJsonPath(): string {
 export function hookErrorLogPath(): string {
   return join(configDir(), "hook-errors.log");
 }
+
+export function sessionsDir(): string {
+  return join(configDir(), "sessions");
+}
+
+export function sessionStatePath(claudeCodeSessionId: string): string {
+  return join(sessionsDir(), `${claudeCodeSessionId}.json`);
+}

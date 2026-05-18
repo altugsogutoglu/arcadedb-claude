@@ -4,6 +4,10 @@ import { promisify } from "node:util";
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const tsxBin = require.resolve("tsx/cli");
 
 const exec = promisify(execFile);
 
@@ -32,7 +36,7 @@ afterEach(() => {
 
 describe("post-tool-use hook", () => {
   it("appends a stale entry when an indexed project's file is edited", async () => {
-    await exec("./node_modules/.bin/tsx", ["src/post-tool-use.ts"], {
+    await exec(process.execPath, [tsxBin, "src/post-tool-use.ts"], {
       env: { ...process.env, HOME: tmpHome, PWD: "/tmp/project-a" },
       cwd: process.cwd(),
     });
@@ -43,7 +47,7 @@ describe("post-tool-use hook", () => {
   });
 
   it("does nothing when CWD is outside any indexed project", async () => {
-    await exec("./node_modules/.bin/tsx", ["src/post-tool-use.ts"], {
+    await exec(process.execPath, [tsxBin, "src/post-tool-use.ts"], {
       env: { ...process.env, HOME: tmpHome, PWD: "/random/elsewhere" },
       cwd: process.cwd(),
     });
@@ -53,7 +57,7 @@ describe("post-tool-use hook", () => {
 
   it("exits 0 even on config errors", async () => {
     writeFileSync(join(tmpHome, ".config", "arcadedb", "projects.json"), "{not json");
-    const { stderr } = await exec("./node_modules/.bin/tsx", ["src/post-tool-use.ts"], {
+    const { stderr } = await exec(process.execPath, [tsxBin, "src/post-tool-use.ts"], {
       env: { ...process.env, HOME: tmpHome, PWD: "/tmp/project-a" },
       cwd: process.cwd(),
     });

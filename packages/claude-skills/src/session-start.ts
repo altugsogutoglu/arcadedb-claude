@@ -2,10 +2,22 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { execSync } from "node:child_process";
-import { Client, loadEnv } from "arcadedb-agent-memory";
+import { randomUUID } from "node:crypto";
+import {
+  Client,
+  loadEnv,
+  startSession,
+  findLatestSessionForRepo,
+  linkFollows,
+} from "arcadedb-agent-memory";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { loadProjects, findProject } from "./project-map.js";
-import { buildContext, type ProjectContext, type MemoryContext } from "./context-builder.js";
+import {
+  buildContext,
+  type ProjectContext,
+  type MemoryContext,
+} from "./context-builder.js";
+import { writeSessionState } from "./session-state.js";
 
 async function main(): Promise<void> {
   const cwd = process.env["PWD"] ?? process.cwd();
@@ -23,6 +35,54 @@ async function main(): Promise<void> {
   const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
 
   process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx }) + "\n");
+
+  // After context is printed, set up :Session lifecycle if we have a project match.
+  if (match) {
+    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd).catch(err => logError(err));
+  }
+}
+
+async function tryStartSession(
+  client: Client,
+  memoryDb: string,
+  repo: string,
+  cwd: string,
+): Promise<void> {
+  const claudeCodeSessionId = process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID()}`;
+  const userName = resolveUserName(cwd);
+
+  // Find prior session for this repo BEFORE creating the new one (so excludeId isn't needed).
+  const previousSessionId = await findLatestSessionForRepo(client, memoryDb, repo);
+
+  const newSessionId = await startSession(client, memoryDb, { repo });
+
+  const now = new Date().toISOString();
+  writeSessionState({
+    claudeCodeSessionId,
+    sessionDbId: newSessionId,
+    repo,
+    cwd,
+    userName,
+    startedAt: now,
+    currentTurnIdx: 0,
+    lastExtractedTurnIdx: 0,
+    lastExtractedAt: now,
+  });
+
+  if (previousSessionId) {
+    await linkFollows(client, memoryDb, newSessionId, previousSessionId);
+  }
+}
+
+function resolveUserName(cwd: string): string {
+  try {
+    const out = execSync("git config user.name", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const trimmed = out.trim();
+    if (trimmed) return trimmed;
+  } catch {
+    // fall through
+  }
+  return process.env["ARCADEDB_USER_NAME"] ?? process.env["USER"] ?? "unknown";
 }
 
 async function probeProject(

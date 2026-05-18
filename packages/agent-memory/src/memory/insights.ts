@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "../client.js";
+import { linkDuring } from "./sessions.js";
 
 export interface InsightInput {
   topic: string;
   text: string;
   repo?: string;
+  sessionId?: string;
 }
 
 export interface Insight {
@@ -27,6 +29,9 @@ export async function recordInsight(client: Client, db: string, input: InsightIn
     })
   `;
   await client.execute(db, "cypher", cypher);
+  if (input.sessionId) {
+    await linkDuring(client, db, "Insight", id, input.sessionId);
+  }
   return id;
 }
 
