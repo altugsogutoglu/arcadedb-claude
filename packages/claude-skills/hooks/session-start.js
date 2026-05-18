@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 // src/session-start.ts
-import { appendFileSync, existsSync as existsSync3, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync2 } from "node:fs";
+import { dirname as dirname2 } from "node:path";
 import { execSync } from "node:child_process";
+import { randomUUID as randomUUID2 } from "node:crypto";
 
 // ../agent-memory/dist/src/errors.js
 var ArcadeDBConnectionError = class extends Error {
@@ -115,6 +116,32 @@ function loadEnv(path = DEFAULT_PATH) {
   };
 }
 
+// ../agent-memory/dist/src/memory/sessions.js
+import { randomUUID } from "node:crypto";
+async function startSession(client, db, input = {}) {
+  const id = randomUUID();
+  const repoClause = input.repo ? `, repo: ${cypherStr(input.repo)}` : "";
+  await client.execute(db, "cypher", `CREATE (s:Session { id: ${cypherStr(id)}, startedAt: datetime(${cypherStr((/* @__PURE__ */ new Date()).toISOString())})${repoClause} })`);
+  return id;
+}
+async function findLatestSessionForRepo(client, db, repo, excludeId) {
+  const excludeClause = excludeId ? ` AND s.id <> ${cypherStr(excludeId)}` : "";
+  const rows = await client.query(db, "cypher", `MATCH (s:Session) WHERE s.repo = ${cypherStr(repo)}${excludeClause}
+     RETURN s.id ORDER BY s.startedAt DESC LIMIT 1`);
+  return rows[0]?.["s.id"] ?? null;
+}
+function cypherStr(s) {
+  return `'${s.replace(/'/g, "\\'")}'`;
+}
+async function linkFollows(client, db, laterSessionId, earlierSessionId) {
+  const cypher = `
+    MATCH (later:Session {id: ${cypherStr(laterSessionId)}}),
+          (earlier:Session {id: ${cypherStr(earlierSessionId)}})
+    MERGE (later)-[:FOLLOWS]->(earlier)
+  `;
+  await client.execute(db, "cypher", cypher);
+}
+
 // src/env-paths.ts
 import { homedir as homedir2 } from "node:os";
 import { join as join2 } from "node:path";
@@ -126,6 +153,12 @@ function projectsJsonPath() {
 }
 function hookErrorLogPath() {
   return join2(configDir(), "hook-errors.log");
+}
+function sessionsDir() {
+  return join2(configDir(), "sessions");
+}
+function sessionStatePath(claudeCodeSessionId) {
+  return join2(sessionsDir(), `${claudeCodeSessionId}.json`);
 }
 
 // src/project-map.ts
@@ -182,6 +215,16 @@ function buildContext(input) {
   return lines.join("\n");
 }
 
+// src/session-state.ts
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+function writeSessionState(state) {
+  const path = sessionStatePath(state.claudeCodeSessionId);
+  const dir = dirname(path);
+  if (!existsSync3(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
+}
+
 // src/session-start.ts
 async function main() {
   const cwd = process.env["PWD"] ?? process.cwd();
@@ -196,6 +239,39 @@ async function main() {
   }
   const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
   process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx }) + "\n");
+  if (match) {
+    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd).catch((err) => logError(err));
+  }
+}
+async function tryStartSession(client, memoryDb, repo, cwd) {
+  const claudeCodeSessionId = process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID2()}`;
+  const userName = resolveUserName(cwd);
+  const previousSessionId = await findLatestSessionForRepo(client, memoryDb, repo);
+  const newSessionId = await startSession(client, memoryDb, { repo });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  writeSessionState({
+    claudeCodeSessionId,
+    sessionDbId: newSessionId,
+    repo,
+    cwd,
+    userName,
+    startedAt: now,
+    currentTurnIdx: 0,
+    lastExtractedTurnIdx: 0,
+    lastExtractedAt: now
+  });
+  if (previousSessionId) {
+    await linkFollows(client, memoryDb, newSessionId, previousSessionId);
+  }
+}
+function resolveUserName(cwd) {
+  try {
+    const out = execSync("git config user.name", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const trimmed = out.trim();
+    if (trimmed) return trimmed;
+  } catch {
+  }
+  return process.env["ARCADEDB_USER_NAME"] ?? process.env["USER"] ?? "unknown";
 }
 async function probeProject(client, db, name, lastIndexed) {
   const fileRows = await client.query(db, "cypher", "MATCH (f:File) RETURN count(f) AS count").catch(() => [{ count: 0 }]);
@@ -230,7 +306,7 @@ function safeGitRemote(cwd) {
 function logError(err) {
   try {
     const path = hookErrorLogPath();
-    if (!existsSync3(dirname(path))) mkdirSync(dirname(path), { recursive: true });
+    if (!existsSync4(dirname2(path))) mkdirSync2(dirname2(path), { recursive: true });
     appendFileSync(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] session-start: ${err?.message ?? String(err)}
 `);
   } catch {

@@ -1,6 +1,6 @@
 {
   "name": "arcadedb-claude-skills",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Claude Code plugin: auto-injects ArcadeDB graph context per project, slash commands for decision/query/index/status. Part of the arcadedb-claude suite.",
   "license": "MIT",
   "type": "module",
