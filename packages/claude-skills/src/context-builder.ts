@@ -16,6 +16,7 @@ export interface MemoryContext {
 export interface ContextInput {
   project: ProjectContext | null;
   memory: MemoryContext;
+  extractorMode?: string;
 }
 
 export function buildContext(input: ContextInput): string {
@@ -33,5 +34,13 @@ export function buildContext(input: ContextInput): string {
   lines.push(
     `  Memory DB: ${input.memory.db} (${input.memory.decisionCount} decisions, ${input.memory.insightCount} insights)`
   );
+  lines.push(extractorLine(input.extractorMode));
   return lines.join("\n");
+}
+
+function extractorLine(mode: string | undefined): string {
+  if (mode === "dryrun") {
+    return "  LLM extractor: dryrun (writing triples to ~/.config/arcadedb/dryrun/, no DB writes)";
+  }
+  return "  LLM extractor: off (set ARCADEDB_EXTRACTOR=dryrun to opt in to v1 capture)";
 }

@@ -95,6 +95,42 @@ Claude sees this in its context so structural questions are answered from the gr
 
 Triggers on phrases like "how does X work", "what calls Y", "decision about Z". Tells Claude to query the graph first instead of reading files.
 
+### v1 LLM extraction (opt-in, dogfood)
+
+As of v0.5.0 the plugin can mine each session for structured triples — decisions, insights, Q&A pairs, blockers, fixes, entity mentions — using a Haiku-class subagent at rate-limited intervals. **It is off by default.**
+
+To opt in:
+
+```bash
+export ARCADEDB_EXTRACTOR=dryrun
+```
+
+(Either in your shell config, in `~/.claude/settings.json` under `env`, or in a project `.envrc` if you use direnv.)
+
+What happens when it's on:
+
+- Every 10 turns or 15 minutes (whichever first), the `Stop` hook emits a `decision:block` JSON that asks Claude to dispatch `Agent(subagent_type=extractor)`.
+- The extractor reads the recent transcript slice, applies the schema vocabulary, and **writes intended Cypher to `~/.config/arcadedb/dryrun/<sessionDbId>.jsonl`** — no DB writes in v1.
+- The session continues normally. Cost is ~$0.005 per extraction.
+
+To review what was extracted:
+
+```bash
+npx arcadedb-memory dryrun-review <sessionDbId>
+```
+
+Walks each triple with evidence, `a/r/s/q` prompts. Accepted triples accumulate in `~/.config/arcadedb/dryrun-accepted.jsonl`.
+
+**Promotion to v2 (live writes):** once 10 dogfood sessions hit ≥80% accept rate, the extractor will flip to live mode by default. Opt-out will then be `ARCADEDB_EXTRACTOR=off`. Track progress in `docs/superpowers/specs/2026-05-17-llm-extractor-design.md`.
+
+Environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ARCADEDB_EXTRACTOR` | unset (off) | Set to `dryrun` to opt into v1. |
+| `ARCADEDB_EXTRACT_TURNS` | `10` | Trip after this many turns since last extract. |
+| `ARCADEDB_EXTRACT_INTERVAL_MS` | `900000` (15 min) | Trip after this much elapsed time. |
+
 ## Configuration
 
 `~/.config/arcadedb/projects.json`:

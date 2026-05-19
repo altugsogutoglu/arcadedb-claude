@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   }
   const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
 
-  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx }) + "\n");
+  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"] }) + "\n");
 
   // After context is printed, set up :Session lifecycle if we have a project match.
   if (match) {

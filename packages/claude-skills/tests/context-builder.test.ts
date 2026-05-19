@@ -57,4 +57,23 @@ describe("buildContext", () => {
     expect(text).toMatch(/Project: project-b/);
     expect(text).toMatch(/not indexed yet/i);
   });
+
+  it("shows extractor off with hint when ARCADEDB_EXTRACTOR is unset", () => {
+    const text = buildContext({
+      project: null,
+      memory: { db: "claude_memory", decisionCount: 0, insightCount: 0 },
+    });
+    expect(text).toMatch(/LLM extractor: off/);
+    expect(text).toMatch(/ARCADEDB_EXTRACTOR=dryrun/);
+  });
+
+  it("shows extractor dryrun status when opted in", () => {
+    const text = buildContext({
+      project: null,
+      memory: { db: "claude_memory", decisionCount: 0, insightCount: 0 },
+      extractorMode: "dryrun",
+    });
+    expect(text).toMatch(/LLM extractor: dryrun/);
+    expect(text).toMatch(/no DB writes/);
+  });
 });

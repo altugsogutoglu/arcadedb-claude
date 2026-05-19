@@ -218,7 +218,14 @@ function buildContext(input) {
   lines.push(
     `  Memory DB: ${input.memory.db} (${input.memory.decisionCount} decisions, ${input.memory.insightCount} insights)`
   );
+  lines.push(extractorLine(input.extractorMode));
   return lines.join("\n");
+}
+function extractorLine(mode) {
+  if (mode === "dryrun") {
+    return "  LLM extractor: dryrun (writing triples to ~/.config/arcadedb/dryrun/, no DB writes)";
+  }
+  return "  LLM extractor: off (set ARCADEDB_EXTRACTOR=dryrun to opt in to v1 capture)";
 }
 
 // src/session-state.ts
@@ -244,7 +251,7 @@ async function main() {
     projectCtx = await probeProject(client, match.entry.db, match.key, match.entry.lastIndexed);
   }
   const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
-  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx }) + "\n");
+  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"] }) + "\n");
   if (match) {
     await tryStartSession(client, map.defaultMemoryDb, match.key, cwd).catch((err) => logError(err));
   }
