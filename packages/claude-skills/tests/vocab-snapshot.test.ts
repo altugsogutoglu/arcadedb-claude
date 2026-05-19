@@ -25,4 +25,11 @@ describe("buildVocabSnapshot", () => {
     expect(v.naturalKeys["File"]).toEqual(["path"]);
     expect(v.naturalKeys["Decision"]).toEqual(["id"]);
   });
+
+  it("every naturalKeys entry maps to a real vertex label", () => {
+    const v = buildVocabSnapshot();
+    for (const label of Object.keys(v.naturalKeys)) {
+      expect(v.vertexLabels).toContain(label);
+    }
+  });
 });

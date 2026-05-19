@@ -28,12 +28,12 @@ export function buildVocabSnapshot(): VocabSnapshot {
   const labels = new Set<string>();
   const edges = new Set<string>();
   for (const schema of Object.values(allSchemas)) {
-    for (const v of schema.vertices ?? []) labels.add(v.name);
-    for (const e of schema.edges ?? []) edges.add(e.name);
+    for (const v of schema.vertices) labels.add(v.name);
+    for (const e of schema.edges) edges.add(e.name);
   }
   return {
     vertexLabels: [...labels].sort(),
     edgeNames: [...edges].sort(),
-    naturalKeys: NATURAL_KEYS,
+    naturalKeys: { ...NATURAL_KEYS },
   };
 }
