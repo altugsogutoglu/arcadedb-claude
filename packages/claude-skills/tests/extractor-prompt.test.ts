@@ -36,4 +36,10 @@ describe("buildExtractorSystemPrompt", () => {
   it("instructs conservative extraction", () => {
     expect(prompt).toMatch(/conservat/i);
   });
+
+  it("includes the Blocker few-shot with unknown_terms", () => {
+    expect(prompt).toMatch(/"verb":\s*"BLOCKED_BY"/);
+    expect(prompt).toMatch(/unknown_terms/);
+    expect(prompt).toMatch(/TIMES_OUT/);
+  });
 });
