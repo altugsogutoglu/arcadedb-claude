@@ -5,6 +5,8 @@ import { join } from "node:path";
 import {
   readSessionState,
   writeSessionState,
+  incrementTurn,
+  markExtracted,
   type SessionState,
 } from "../src/session-state.js";
 
@@ -92,5 +94,70 @@ describe("session-state", () => {
     const path = join(tmpHome, ".config", "arcadedb", "sessions", "cc-bad.json");
     writeFileSync(path, "{not valid json");
     expect(readSessionState("cc-bad")).toBeNull();
+  });
+});
+
+describe("incrementTurn", () => {
+  it("returns the updated state with currentTurnIdx + 1", () => {
+    const claudeCodeSessionId = "test-inc-" + Date.now();
+    writeSessionState({
+      claudeCodeSessionId,
+      sessionDbId: "uuid-1",
+      repo: "demo",
+      cwd: "/tmp",
+      userName: "Tester",
+      startedAt: "2026-05-19T10:00:00.000Z",
+      currentTurnIdx: 4,
+      lastExtractedTurnIdx: 0,
+      lastExtractedAt: "2026-05-19T10:00:00.000Z",
+    });
+    const next = incrementTurn(claudeCodeSessionId);
+    expect(next?.currentTurnIdx).toBe(5);
+  });
+
+  it("returns null when state file is missing", () => {
+    expect(incrementTurn("nonexistent-" + Date.now())).toBeNull();
+  });
+
+  it("persists the new turn count so a subsequent read sees it", () => {
+    const claudeCodeSessionId = "test-inc-persist-" + Date.now();
+    writeSessionState({
+      claudeCodeSessionId,
+      sessionDbId: "uuid-p",
+      repo: "demo",
+      cwd: "/tmp",
+      userName: "Tester",
+      startedAt: "2026-05-19T10:00:00.000Z",
+      currentTurnIdx: 2,
+      lastExtractedTurnIdx: 0,
+      lastExtractedAt: "2026-05-19T10:00:00.000Z",
+    });
+    incrementTurn(claudeCodeSessionId);
+    const re = readSessionState(claudeCodeSessionId);
+    expect(re?.currentTurnIdx).toBe(3);
+  });
+});
+
+describe("markExtracted", () => {
+  it("updates lastExtractedTurnIdx and lastExtractedAt", () => {
+    const claudeCodeSessionId = "test-mark-" + Date.now();
+    writeSessionState({
+      claudeCodeSessionId,
+      sessionDbId: "uuid-2",
+      repo: "demo",
+      cwd: "/tmp",
+      userName: "Tester",
+      startedAt: "2026-05-19T10:00:00.000Z",
+      currentTurnIdx: 10,
+      lastExtractedTurnIdx: 0,
+      lastExtractedAt: "2026-05-19T10:00:00.000Z",
+    });
+    const updated = markExtracted(claudeCodeSessionId, 10);
+    expect(updated?.lastExtractedTurnIdx).toBe(10);
+    expect(updated?.lastExtractedAt).not.toBe("2026-05-19T10:00:00.000Z");
+  });
+
+  it("returns null when state file is missing", () => {
+    expect(markExtracted("nope-" + Date.now(), 5)).toBeNull();
   });
 });

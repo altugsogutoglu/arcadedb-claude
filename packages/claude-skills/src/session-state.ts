@@ -30,3 +30,20 @@ export function writeSessionState(state: SessionState): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
 }
+
+export function incrementTurn(claudeCodeSessionId: string): SessionState | null {
+  const state = readSessionState(claudeCodeSessionId);
+  if (!state) return null;
+  state.currentTurnIdx += 1;
+  writeSessionState(state);
+  return state;
+}
+
+export function markExtracted(claudeCodeSessionId: string, turnIdx: number): SessionState | null {
+  const state = readSessionState(claudeCodeSessionId);
+  if (!state) return null;
+  state.lastExtractedTurnIdx = turnIdx;
+  state.lastExtractedAt = new Date().toISOString();
+  writeSessionState(state);
+  return state;
+}

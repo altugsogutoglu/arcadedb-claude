@@ -1,13 +1,17 @@
 {
   "name": "arcadedb-claude-skills",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Claude Code plugin: auto-injects ArcadeDB graph context per project, slash commands for decision/query/index/status. Part of the arcadedb-claude suite.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
+  "bin": {
+    "arcadedb-skills": "./dist/bin/arcadedb-skills.js"
+  },
   "files": [
     "dist",
+    "bin",
     "hooks",
     "skills",
     "commands",
@@ -18,7 +22,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run bundle:hooks",
-    "bundle:hooks": "esbuild src/session-start.ts src/post-tool-use.ts src/session-end.ts --bundle --platform=node --target=node20 --format=esm --outdir=hooks && chmod +x hooks/session-start.js hooks/post-tool-use.js hooks/session-end.js",
+    "bundle:hooks": "esbuild src/session-start.ts src/post-tool-use.ts src/session-end.ts src/stop.ts --bundle --platform=node --target=node20 --format=esm --outdir=hooks && chmod +x hooks/session-start.js hooks/post-tool-use.js hooks/session-end.js hooks/stop.js",
     "test": "vitest run",
     "test:unit": "vitest run --exclude tests/session-start.test.ts --exclude tests/post-tool-use.test.ts",
     "test:watch": "vitest"

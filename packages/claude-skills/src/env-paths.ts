@@ -20,3 +20,11 @@ export function sessionsDir(): string {
 export function sessionStatePath(claudeCodeSessionId: string): string {
   return join(sessionsDir(), `${claudeCodeSessionId}.json`);
 }
+
+export function dryrunPath(sessionDbId: string): string {
+  return join(configDir(), "dryrun", `${sessionDbId}.jsonl`);
+}
+
+export function extractorErrorsPath(sessionDbId: string, timestamp: string): string {
+  return join(configDir(), "extractor-errors", `${sessionDbId}-${timestamp}.txt`);
+}
