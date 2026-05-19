@@ -128,28 +128,4 @@ describe("stop hook", () => {
     expect(stdout).toBe("");
   });
 
-  it("uses ARCADEDB_EXTRACT for live mode reason tag", async () => {
-    writeFileSync(
-      join(tmpHome, ".config", "arcadedb", "sessions", "live.json"),
-      JSON.stringify({
-        claudeCodeSessionId: "live",
-        sessionDbId: "uuid-live",
-        repo: "demo",
-        cwd: "/tmp",
-        userName: "Tester",
-        startedAt: "2026-05-19T10:00:00.000Z",
-        currentTurnIdx: 9,
-        lastExtractedTurnIdx: 0,
-        lastExtractedAt: "2026-05-19T10:00:00.000Z",
-      }),
-    );
-
-    const { stdout } = await runStop(
-      JSON.stringify({ session_id: "live", stop_hook_active: false }),
-      { HOME: tmpHome, ARCADEDB_EXTRACTOR: "live" },
-    );
-    const parsed = JSON.parse(stdout);
-    expect(parsed.reason).toMatch(/^ARCADEDB_EXTRACT: /);
-    expect(parsed.reason).not.toMatch(/ARCADEDB_EXTRACT_DRYRUN/);
-  });
 });

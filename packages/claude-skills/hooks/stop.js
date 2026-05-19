@@ -67,7 +67,7 @@ var DEFAULT_TURNS = envInt("ARCADEDB_EXTRACT_TURNS", 10);
 var DEFAULT_INTERVAL_MS = envInt("ARCADEDB_EXTRACT_INTERVAL_MS", 15 * 60 * 1e3);
 async function main() {
   const mode = process.env["ARCADEDB_EXTRACTOR"];
-  if (mode !== "dryrun" && mode !== "live") {
+  if (mode !== "dryrun") {
     return;
   }
   const raw = readStdin();
@@ -87,11 +87,10 @@ async function main() {
     /* @__PURE__ */ new Date()
   );
   if (!tripped) return;
-  const reasonTag = mode === "live" ? "ARCADEDB_EXTRACT" : "ARCADEDB_EXTRACT_DRYRUN";
   const turnRange = `${state.lastExtractedTurnIdx + 1}..${state.currentTurnIdx}`;
   process.stdout.write(JSON.stringify({
     decision: "block",
-    reason: `${reasonTag}: dispatch the extractor subagent (subagent_type=extractor) for session ${state.sessionDbId}, claudeCodeSessionId ${payload.session_id}, repo ${state.repo}, userName ${state.userName}, turns ${turnRange}, transcript at ${payload.transcript_path ?? "(unavailable)"}. After it finishes, continue normally.`
+    reason: `ARCADEDB_EXTRACT_DRYRUN: dispatch the extractor subagent (subagent_type=extractor) for session ${state.sessionDbId}, claudeCodeSessionId ${payload.session_id}, repo ${state.repo}, userName ${state.userName}, turns ${turnRange}, transcript at ${payload.transcript_path ?? "(unavailable)"}. After it finishes, continue normally.`
   }) + "\n");
 }
 function readStdin() {
