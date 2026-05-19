@@ -9,16 +9,25 @@ const require = createRequire(import.meta.url);
 const tsxBin = require.resolve("tsx/cli");
 const HOOK = join(__dirname, "..", "src", "stop.ts");
 
-async function runStop(stdin: string, env: Record<string, string>): Promise<{ stdout: string; status: number }> {
+async function runStop(stdin: string, env: Record<string, string | undefined>): Promise<{ stdout: string; status: number }> {
   return new Promise((resolve, reject) => {
+    const childEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined) childEnv[k] = v;
+    }
+    if (env["ARCADEDB_EXTRACTOR"] === undefined) delete childEnv["ARCADEDB_EXTRACTOR"];
+    for (const [k, v] of Object.entries(env)) {
+      if (v !== undefined) childEnv[k] = v;
+    }
     const child = spawn("node", [tsxBin, HOOK], {
-      env: { ...process.env, ...env },
+      env: childEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     child.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
     child.on("close", (code: number | null) => resolve({ stdout, status: code ?? 0 }));
     child.on("error", reject);
+    child.stdin.on("error", () => {});
     child.stdin.write(stdin);
     child.stdin.end();
   });

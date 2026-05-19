@@ -12,8 +12,14 @@ interface StopPayload {
   hook_event_name?: string;
 }
 
-const DEFAULT_TURNS = Number(process.env["ARCADEDB_EXTRACT_TURNS"] ?? 10);
-const DEFAULT_INTERVAL_MS = Number(process.env["ARCADEDB_EXTRACT_INTERVAL_MS"] ?? 15 * 60 * 1000);
+function envInt(name: string, fallback: number): number {
+  const v = process.env[name];
+  if (!v) return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+const DEFAULT_TURNS = envInt("ARCADEDB_EXTRACT_TURNS", 10);
+const DEFAULT_INTERVAL_MS = envInt("ARCADEDB_EXTRACT_INTERVAL_MS", 15 * 60 * 1000);
 
 async function main(): Promise<void> {
   const mode = process.env["ARCADEDB_EXTRACTOR"];
