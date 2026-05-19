@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,19 +9,19 @@ const require = createRequire(import.meta.url);
 const tsxBin = require.resolve("tsx/cli");
 const HOOK = join(__dirname, "..", "src", "stop.ts");
 
-const exec = promisify(execFile);
-
 async function runStop(stdin: string, env: Record<string, string>): Promise<{ stdout: string; status: number }> {
-  try {
-    const { stdout } = await exec("node", [tsxBin, HOOK], {
-      input: stdin,
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", [tsxBin, HOOK], {
       env: { ...process.env, ...env },
-      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
     });
-    return { stdout, status: 0 };
-  } catch (e: any) {
-    return { stdout: e.stdout ?? "", status: e.code ?? e.status ?? 1 };
-  }
+    let stdout = "";
+    child.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    child.on("close", (code: number | null) => resolve({ stdout, status: code ?? 0 }));
+    child.on("error", reject);
+    child.stdin.write(stdin);
+    child.stdin.end();
+  });
 }
 
 let tmpHome: string;
