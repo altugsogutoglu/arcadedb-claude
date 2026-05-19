@@ -25,4 +25,10 @@ describe("hooks.json", () => {
     const cmd = cfg.hooks?.SessionEnd?.[0]?.hooks?.find((h: { type: string; command?: string }) => h.type === "command");
     expect(cmd?.command).toMatch(/\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/session-end\.js/);
   });
+
+  it("registers a Stop hook pointing at stop.js", () => {
+    expect(Array.isArray(cfg.hooks?.Stop)).toBe(true);
+    const cmd = cfg.hooks?.Stop?.[0]?.hooks?.find((h: { type: string; command?: string }) => h.type === "command");
+    expect(cmd?.command).toMatch(/\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/stop\.js/);
+  });
 });
