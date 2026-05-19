@@ -13,3 +13,5 @@ export type { Decision, DecisionInput } from "./memory/decisions.js";
 export { recordInsight, queryInsights } from "./memory/insights.js";
 export type { Insight, InsightInput } from "./memory/insights.js";
 export { startSession, endSession, findLatestSessionForRepo, linkFollows, linkDuring } from "./memory/sessions.js";
+export { buildExtractorCypher } from "./extractor/cypher-builder.js";
+export type { BuildArgs as ExtractorCypherArgs } from "./extractor/cypher-builder.js";
