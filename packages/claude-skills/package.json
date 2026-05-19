@@ -6,8 +6,12 @@
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
+  "bin": {
+    "arcadedb-skills": "./dist/bin/arcadedb-skills.js"
+  },
   "files": [
     "dist",
+    "bin",
     "hooks",
     "skills",
     "commands",
