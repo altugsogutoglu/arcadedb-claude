@@ -5,6 +5,10 @@ import { applySchemas } from "../src/migrations/apply.js";
 import { allSchemas, type SchemaDomain } from "../src/schemas/all.js";
 import { recordDecision } from "../src/memory/decisions.js";
 import { recordInsight } from "../src/memory/insights.js";
+import { createInterface } from "node:readline";
+import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, dirname } from "node:path";
 
 const argv = process.argv.slice(2);
 const [cmd, ...rest] = argv;
@@ -15,6 +19,60 @@ function flag(name: string): string | undefined {
 }
 
 async function main(): Promise<number> {
+  if (cmd === "dryrun-review") {
+    const session = rest[0];
+    if (!session) { console.error("usage: arcadedb-memory dryrun-review <session>"); return 1; }
+
+    const path = join(homedir(), ".config", "arcadedb", "dryrun", `${session}.jsonl`);
+    if (!existsSync(path)) { console.error(`no dry-run file at ${path}`); return 1; }
+
+    const acceptedPath = join(homedir(), ".config", "arcadedb", "dryrun-accepted.jsonl");
+    if (!existsSync(dirname(acceptedPath))) mkdirSync(dirname(acceptedPath), { recursive: true });
+
+    const lines = readFileSync(path, "utf8").trim().split("\n").filter(Boolean);
+    const triples = lines
+      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+      .filter((entry): entry is { kind: string } => entry !== null && entry.kind === "triple");
+
+    if (triples.length === 0) {
+      console.log("no triple lines found.");
+      return 0;
+    }
+
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
+
+    let accepted = 0;
+    let rejected = 0;
+    let skipped = 0;
+
+    for (let i = 0; i < triples.length; i++) {
+      const entry = triples[i] as { kind: string; triple: { subject: { label: string; props: Record<string, unknown> }; verb: string; object: { label: string; props: Record<string, unknown> }; evidence?: string; confidence?: number } };
+      const t = entry.triple;
+      console.log(`\nTriple ${i + 1}/${triples.length}`);
+      console.log(`  (${t.subject.label} ${JSON.stringify(t.subject.props)}) -[:${t.verb}]-> (${t.object.label} ${JSON.stringify(t.object.props)})`);
+      if (t.evidence) console.log(`  evidence: ${t.evidence}`);
+      if (t.confidence != null) console.log(`  confidence: ${t.confidence}`);
+
+      const answer = (await ask("  [a]ccept  [r]eject  [s]kip  [q]uit: ")).trim().toLowerCase();
+      if (answer === "a") {
+        appendFileSync(acceptedPath, JSON.stringify({ session, ...entry }) + "\n");
+        accepted++;
+      } else if (answer === "r") {
+        rejected++;
+      } else if (answer === "q") {
+        console.log("quit.");
+        break;
+      } else {
+        skipped++;
+      }
+    }
+
+    rl.close();
+    console.log(`\nsummary: ${accepted} accepted, ${rejected} rejected, ${skipped} skipped (of ${triples.length} total)`);
+    return 0;
+  }
+
   const env = loadEnv();
   const client = new Client(env);
 
@@ -62,7 +120,7 @@ async function main(): Promise<number> {
       return 0;
     }
     default:
-      console.error("commands: migrate, record-decision, record-insight, status");
+      console.error("commands: migrate, record-decision, record-insight, status, dryrun-review");
       return 1;
   }
 }
