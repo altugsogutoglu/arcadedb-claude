@@ -6,10 +6,12 @@ import { detectLanguage } from "./languages.js";
 import { detectModule } from "./modules.js";
 import { parseTsImports } from "./parsers/ts-imports.js";
 import { parsePhpImports } from "./parsers/php-imports.js";
+import { parseJavaImports, parseJavaPackage } from "./parsers/java-imports.js";
+import { javaFqnForFile, resolveJavaImport } from "./resolvers/java.js";
 import { resolveRelative, resolvePsr4, type Psr4Map } from "./resolvers/path.js";
 import { findTsconfigs, tsconfigForFile, resolveAlias, type TsconfigPaths } from "./resolvers/tsconfig.js";
 import { findComposers, composerForFile, type ComposerPsr4 } from "./resolvers/composer.js";
-import { upsertRepo, upsertModule, upsertFile, linkContains, linkImports } from "./writer.js";
+import { upsertRepo, upsertModule, upsertFile, linkContains, linkImports, linkImportsToModule } from "./writer.js";
 
 export interface IndexOptions {
   db: string;
@@ -58,9 +60,18 @@ export async function indexRepo(
   const tsconfigs = await findTsconfigs(root, files);
   const composers = await findComposers(root, files);
 
-  const fileLanguages = new Map<string, "ts" | "js" | "php" | "other">();
+  const fileLanguages = new Map<string, "ts" | "js" | "php" | "java" | "other">();
   const moduleNames = new Set<string>();
   let indexedFileCount = 0;
+
+  /**
+   * FQN (e.g. "com.foo.Bar", or a bare class name for default-package files)
+   * -> repo-relative path, for Java import resolution. First write wins on
+   * collision (rare: only default-package files with duplicate class names).
+   */
+  const javaTypeIndex = new Map<string, string>();
+  /** Java package names present in this repo (each is a Module). */
+  const javaPackages = new Set<string>();
 
   for (const rel of files) {
     const lang = detectLanguage(rel);
@@ -79,7 +90,16 @@ export async function indexRepo(
       loc,
     });
 
-    const moduleName = detectModule(rel);
+    let moduleName: string;
+    if (lang === "java") {
+      const pkg = parseJavaPackage(source);
+      moduleName = pkg ?? detectModule(rel);
+      const fqn = javaFqnForFile(rel, pkg);
+      if (!javaTypeIndex.has(fqn)) javaTypeIndex.set(fqn, rel);
+      if (pkg) javaPackages.add(pkg);
+    } else {
+      moduleName = detectModule(rel);
+    }
     const moduleQualified = `${repoName}/${moduleName}`;
     if (!moduleNames.has(moduleQualified)) {
       await upsertModule(client, options.db, {
@@ -106,8 +126,26 @@ export async function indexRepo(
     if (lang === "other") continue;
     const fullPath = join(root, rel);
     const source = await readFile(fullPath, "utf8");
-    const specs = lang === "php" ? parsePhpImports(source) : parseTsImports(source);
     const repoQualified = `${repoName}/${rel}`;
+
+    if (lang === "java") {
+      for (const imp of parseJavaImports(source)) {
+        const res = resolveJavaImport(imp, javaTypeIndex, javaPackages);
+        if (res.kind === "file") {
+          await linkImports(client, options.db, repoQualified, `${repoName}/${res.path}`);
+          importsCount++;
+        } else if (res.kind === "module") {
+          await linkImportsToModule(client, options.db, repoQualified, `${repoName}/${res.pkg}`);
+          importsCount++;
+        } else {
+          await linkImports(client, options.db, repoQualified, null, res.spec);
+          unresolvedCount++;
+        }
+      }
+      continue;
+    }
+
+    const specs = lang === "php" ? parsePhpImports(source) : parseTsImports(source);
 
     for (const spec of specs) {
       const resolved = lang === "php"

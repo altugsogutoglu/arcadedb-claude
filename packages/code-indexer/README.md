@@ -1,6 +1,6 @@
 # arcadedb-code-indexer
 
-CLI that walks a TypeScript/JavaScript or Laravel codebase and writes its structure into an [ArcadeDB](https://arcadedb.com) graph. Phase 2 of the `arcadedb-claude` suite.
+CLI that walks a TypeScript/JavaScript, PHP/Laravel, or Java codebase and writes its structure into an [ArcadeDB](https://arcadedb.com) graph. Phase 2 of the `arcadedb-claude` suite.
 
 ## The arcadedb-claude suite
 
@@ -74,12 +74,14 @@ arcadedb-index ./some-project --db project-a --stack nextjs
 ## What it writes
 
 - `:Repo` (one per indexed root, keyed by basename)
-- `:Module` (top-level dir, or Laravel `app/<PascalCase>` subdir)
+- `:Module` (top-level dir, or Laravel `app/<PascalCase>` subdir; for Java, the package, e.g. `com.example.model`)
 - `:File` (every source file in the repo)
 - `:CONTAINS` (Repo to Module to File hierarchy)
-- `:IMPORTS` (File to File, resolved via relative paths or PSR-4)
+- `:IMPORTS` (File to File, resolved via relative paths, PSR-4, or Java FQN; Java wildcard imports like `import com.foo.*` link File to the package `:Module`)
 
-Unresolved import specifiers (npm packages, namespace prefixes outside the PSR-4 map) are stored as a comma-separated `unresolvedImports` property on the source `:File`.
+Unresolved import specifiers (npm packages, namespace prefixes outside the PSR-4 map, external Java imports like `java.util.*`) are stored as a comma-separated `unresolvedImports` property on the source `:File`.
+
+> **Note (Java path schemes):** a Java `:Module` is keyed by dot-separated package (`<repo>/com.example.model`), while the `:File` nodes it contains are keyed by slash-separated source paths (`<repo>/src/main/java/com/example/model/User.java`). Don't derive one from the other — traverse the `:CONTAINS` edge instead.
 
 ## Limitations (v0.1.0)
 

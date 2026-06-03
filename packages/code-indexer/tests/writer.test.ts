@@ -101,4 +101,26 @@ describe("writer (IMPORTS)", () => {
     const list = val.split(",").map(s => s.trim()).filter(Boolean);
     expect(list).toContain("next/server");
   });
+
+  it("linkImportsToModule creates an :IMPORTS edge from a file to a module", async () => {
+    await upsertFile(client, db.name, { path: "example-app/app/Main.java", language: "java" });
+    await upsertModule(client, db.name, { name: "com.example.model", path: "example-app/com.example.model", language: "java" });
+    const { linkImportsToModule } = await import("../src/writer.js");
+    await linkImportsToModule(client, db.name, "example-app/app/Main.java", "example-app/com.example.model");
+    const rows = await client.query<{ count: number }>(
+      db.name, "cypher",
+      "MATCH (a:File {path: 'example-app/app/Main.java'})-[:IMPORTS]->(m:Module {path: 'example-app/com.example.model'}) RETURN count(*) AS count"
+    );
+    expect(rows[0]?.count).toBe(1);
+  });
+
+  it("linkImportsToModule is idempotent", async () => {
+    const { linkImportsToModule } = await import("../src/writer.js");
+    await linkImportsToModule(client, db.name, "example-app/app/Main.java", "example-app/com.example.model");
+    const rows = await client.query<{ count: number }>(
+      db.name, "cypher",
+      "MATCH (a:File {path: 'example-app/app/Main.java'})-[:IMPORTS]->(m:Module {path: 'example-app/com.example.model'}) RETURN count(*) AS count"
+    );
+    expect(rows[0]?.count).toBe(1);
+  });
 });

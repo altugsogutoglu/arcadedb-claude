@@ -82,3 +82,17 @@ export async function linkImports(
     await client.execute(db, "cypher", cy);
   }
 }
+
+export async function linkImportsToModule(
+  client: Client,
+  db: string,
+  fromFilePath: string,
+  modulePath: string,
+): Promise<void> {
+  const cy = `
+    MATCH (a:File {path: ${q(fromFilePath)}})
+    MATCH (m:Module {path: ${q(modulePath)}})
+    MERGE (a)-[:IMPORTS]->(m)
+  `;
+  await client.execute(db, "cypher", cy);
+}
