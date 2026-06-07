@@ -221,11 +221,9 @@ function buildContext(input) {
   lines.push(extractorLine(input.extractorMode));
   return lines.join("\n");
 }
-function extractorLine(mode) {
-  if (mode === "dryrun") {
-    return "  LLM extractor: dryrun (writing triples to ~/.config/arcadedb/dryrun/, no DB writes)";
-  }
-  return "  LLM extractor: off (set ARCADEDB_EXTRACTOR=dryrun to opt in to v1 capture)";
+function extractorLine(extractorMode) {
+  const mode = (extractorMode ?? "live").toLowerCase();
+  return mode === "off" ? "  LLM extractor: off (set ARCADEDB_EXTRACTOR=live or dryrun to capture)" : mode === "dryrun" ? "  LLM extractor: dryrun (JSONL audit only; set ARCADEDB_EXTRACTOR=live to write the graph)" : "  LLM extractor: live (capturing decisions/insights/Q&A into claude_memory; ARCADEDB_EXTRACTOR=off to disable)";
 }
 
 // src/session-state.ts
