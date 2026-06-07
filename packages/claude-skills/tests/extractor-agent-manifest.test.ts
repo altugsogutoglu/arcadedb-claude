@@ -15,21 +15,13 @@ describe("extractor subagent manifest", () => {
     expect(manifest).toMatch(/tools:\s*Read,\s*Write,\s*Bash/);
   });
 
-  it("documents the dry-run output path", () => {
-    expect(manifest).toMatch(/~\/\.config\/arcadedb\/dryrun\/<sessionDbId>\.jsonl/);
-  });
-
-  it("references the three helper exports from arcadedb-claude-skills", () => {
+  it("references the buildExtractorSystemPrompt helper from arcadedb-claude-skills", () => {
     expect(manifest).toContain("buildExtractorSystemPrompt");
-    expect(manifest).toContain("validateExtraction");
-    expect(manifest).toContain("writeDryrunBatch");
   });
 
-  it("references the mark-extracted CLI", () => {
+  it("documents the extract-write call and live mode", () => {
+    expect(manifest).toContain("extract-write");
+    expect(manifest).toContain("--mode");
     expect(manifest).toContain("mark-extracted");
-  });
-
-  it("declares it does NOT write to the live database in v1", () => {
-    expect(manifest).toMatch(/do not write to the live database/i);
   });
 });
