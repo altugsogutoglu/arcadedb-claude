@@ -82,14 +82,18 @@ async function main(): Promise<number> {
 
     let live = { written: 0, failed: 0, errors: [] as string[] };
     if (mode === "live") {
-      const map = loadProjects(projectsJsonPath());
-      const client = new Client(loadEnv());
-      live = await executeLiveBatch(result.valid, {
-        execute: (db, cypher) => client.execute(db, "cypher", cypher),
-        memoryDb: map.defaultMemoryDb,
-        naturalKeys: vocab.naturalKeys,
-        sessionDbId,
-      });
+      try {
+        const map = loadProjects(projectsJsonPath());
+        const client = new Client(loadEnv());
+        live = await executeLiveBatch(result.valid, {
+          execute: (db, cypher) => client.execute(db, "cypher", cypher),
+          memoryDb: map.defaultMemoryDb,
+          naturalKeys: vocab.naturalKeys,
+          sessionDbId,
+        });
+      } catch (e) {
+        live = { written: 0, failed: result.valid.length, errors: [`live write unavailable: ${(e as Error).message}`] };
+      }
     }
 
     console.log(JSON.stringify({

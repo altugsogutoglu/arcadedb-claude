@@ -77,6 +77,29 @@ describe("arcadedb-skills extract-write (dryrun)", () => {
     expect(code).toBe(1);
   });
 
+  it("mode=live with no env config exits 0 and reports the error (no crash, no retry storm)", async () => {
+    const rawFile = join(tmpHome, "raw-live.json");
+    writeFileSync(rawFile, JSON.stringify({
+      triples: [{
+        subject: { label: "Concept", props: { name: "x" } },
+        verb: "ABOUT",
+        object: { label: "Concept", props: { name: "y" } },
+        evidence: "live error path test",
+      }],
+    }));
+
+    const { code, stdout } = await runCli(
+      ["extract-write", "--raw", rawFile, "--session", "s-live", "--cc-session", "cc", "--turns", "1..2", "--mode", "live"],
+      { HOME: tmpHome },
+    );
+    expect(code).toBe(0);
+
+    const out = JSON.parse(stdout);
+    expect(out.ok).toBe(true);
+    expect(out.errors.length).toBeGreaterThan(0);
+    expect(out.counts.failed).toBe(1);
+  });
+
   it("exits 0 and writes an error file when validation fails", async () => {
     const rawFile = join(tmpHome, "raw.json");
     writeFileSync(rawFile, JSON.stringify({ not_triples: true }));
