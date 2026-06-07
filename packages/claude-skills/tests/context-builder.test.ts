@@ -58,22 +58,30 @@ describe("buildContext", () => {
     expect(text).toMatch(/not indexed yet/i);
   });
 
-  it("shows extractor off with hint when ARCADEDB_EXTRACTOR is unset", () => {
-    const text = buildContext({
+  it("shows live capture by default (mode undefined)", () => {
+    const out = buildContext({
       project: null,
       memory: { db: "claude_memory", decisionCount: 0, insightCount: 0 },
+      extractorMode: undefined,
     });
-    expect(text).toMatch(/LLM extractor: off/);
-    expect(text).toMatch(/ARCADEDB_EXTRACTOR=dryrun/);
+    expect(out).toContain("LLM extractor: live");
   });
 
-  it("shows extractor dryrun status when opted in", () => {
-    const text = buildContext({
+  it("shows dryrun when mode=dryrun", () => {
+    const out = buildContext({
       project: null,
       memory: { db: "claude_memory", decisionCount: 0, insightCount: 0 },
       extractorMode: "dryrun",
     });
-    expect(text).toMatch(/LLM extractor: dryrun/);
-    expect(text).toMatch(/no DB writes/);
+    expect(out).toContain("LLM extractor: dryrun");
+  });
+
+  it("shows off when mode=off", () => {
+    const out = buildContext({
+      project: null,
+      memory: { db: "claude_memory", decisionCount: 0, insightCount: 0 },
+      extractorMode: "off",
+    });
+    expect(out).toContain("LLM extractor: off");
   });
 });
