@@ -65,4 +65,34 @@ describe("arcadedb-skills extract-write (dryrun)", () => {
     expect(contents).toContain('"kind":"batch"');
     expect(contents).toContain('"kind":"triple"');
   });
+
+  it("exits 1 when required flags are missing", async () => {
+    const rawFile = join(tmpHome, "raw.json");
+    writeFileSync(rawFile, JSON.stringify({ triples: [] }));
+
+    const { code } = await runCli(
+      ["extract-write", "--raw", rawFile, "--session", "s"],
+      { HOME: tmpHome },
+    );
+    expect(code).toBe(1);
+  });
+
+  it("exits 0 and writes an error file when validation fails", async () => {
+    const rawFile = join(tmpHome, "raw.json");
+    writeFileSync(rawFile, JSON.stringify({ not_triples: true }));
+
+    const { code, stdout } = await runCli(
+      ["extract-write", "--raw", rawFile, "--session", "badsess", "--cc-session", "cc", "--turns", "1..2", "--mode", "dryrun"],
+      { HOME: tmpHome },
+    );
+    expect(code).toBe(0);
+
+    const parsed = JSON.parse(stdout);
+    expect(parsed.ok).toBe(false);
+    expect(typeof parsed.reason).toBe("string");
+
+    const errorsDir = join(tmpHome, ".config", "arcadedb", "extractor-errors");
+    expect(existsSync(errorsDir)).toBe(true);
+    expect(readdirSync(errorsDir).length).toBeGreaterThan(0);
+  });
 });
