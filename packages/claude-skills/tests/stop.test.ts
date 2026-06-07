@@ -98,10 +98,81 @@ describe("stop hook", () => {
     expect(status).toBe(0);
     const parsed = JSON.parse(stdout);
     expect(parsed.decision).toBe("block");
-    expect(parsed.reason).toMatch(/ARCADEDB_EXTRACT_DRYRUN/);
+    expect(parsed.reason).toMatch(/--mode dryrun/);
     expect(parsed.reason).toMatch(/uuid-trip/);
     expect(parsed.reason).toMatch(/demo/);
-    expect(parsed.reason).toMatch(/turns 1\.\.10/);
+    expect(parsed.reason).toMatch(/1\.\.10/);
+  });
+
+  it("does nothing when ARCADEDB_EXTRACTOR=off", async () => {
+    writeFileSync(
+      join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
+      JSON.stringify({
+        claudeCodeSessionId: "abc",
+        sessionDbId: "uuid-trip",
+        repo: "demo",
+        cwd: "/tmp",
+        userName: "Tester",
+        startedAt: "2026-05-19T10:00:00.000Z",
+        currentTurnIdx: 9,
+        lastExtractedTurnIdx: 0,
+        lastExtractedAt: "2026-05-19T10:00:00.000Z",
+      }),
+    );
+    const { stdout } = await runStop(
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: "/tmp/t" }),
+      { HOME: tmpHome, ARCADEDB_EXTRACTOR: "off" },
+    );
+    expect(stdout.trim()).toBe("");
+  });
+
+  it("dispatches in live mode by default (flag unset)", async () => {
+    writeFileSync(
+      join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
+      JSON.stringify({
+        claudeCodeSessionId: "abc",
+        sessionDbId: "uuid-trip",
+        repo: "demo",
+        cwd: "/tmp",
+        userName: "Tester",
+        startedAt: "2026-05-19T10:00:00.000Z",
+        currentTurnIdx: 9,
+        lastExtractedTurnIdx: 0,
+        lastExtractedAt: "2026-05-19T10:00:00.000Z",
+      }),
+    );
+    const { stdout } = await runStop(
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: "/tmp/t" }),
+      { HOME: tmpHome, ARCADEDB_EXTRACTOR: undefined },
+    );
+    const out = JSON.parse(stdout);
+    expect(out.decision).toBe("block");
+    expect(out.reason).toContain("--mode live");
+    expect(out.reason).toContain("subagent_type=extractor");
+  });
+
+  it("dispatches in dryrun mode when ARCADEDB_EXTRACTOR=dryrun", async () => {
+    writeFileSync(
+      join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
+      JSON.stringify({
+        claudeCodeSessionId: "abc",
+        sessionDbId: "uuid-trip",
+        repo: "demo",
+        cwd: "/tmp",
+        userName: "Tester",
+        startedAt: "2026-05-19T10:00:00.000Z",
+        currentTurnIdx: 9,
+        lastExtractedTurnIdx: 0,
+        lastExtractedAt: "2026-05-19T10:00:00.000Z",
+      }),
+    );
+    const { stdout } = await runStop(
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: "/tmp/t" }),
+      { HOME: tmpHome, ARCADEDB_EXTRACTOR: "dryrun" },
+    );
+    const out = JSON.parse(stdout);
+    expect(out.decision).toBe("block");
+    expect(out.reason).toContain("--mode dryrun");
   });
 
   it("does not trip when delta is small and no time elapsed", async () => {

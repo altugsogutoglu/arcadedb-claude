@@ -22,10 +22,9 @@ const DEFAULT_TURNS = envInt("ARCADEDB_EXTRACT_TURNS", 10);
 const DEFAULT_INTERVAL_MS = envInt("ARCADEDB_EXTRACT_INTERVAL_MS", 15 * 60 * 1000);
 
 async function main(): Promise<void> {
-  const mode = process.env["ARCADEDB_EXTRACTOR"];
-  if (mode !== "dryrun") {
-    return;
-  }
+  const mode = (process.env["ARCADEDB_EXTRACTOR"] ?? "live").toLowerCase();
+  if (mode === "off") return;
+  const dispatchMode = mode === "dryrun" ? "dryrun" : "live";
 
   const raw = readStdin();
   let payload: StopPayload;
@@ -52,7 +51,17 @@ async function main(): Promise<void> {
 
   process.stdout.write(JSON.stringify({
     decision: "block",
-    reason: `ARCADEDB_EXTRACT_DRYRUN: dispatch the extractor subagent (subagent_type=extractor) for session ${state.sessionDbId}, claudeCodeSessionId ${payload.session_id}, repo ${state.repo}, userName ${state.userName}, turns ${turnRange}, transcript at ${payload.transcript_path ?? "(unavailable)"}. After it finishes, continue normally.`,
+    reason:
+      `ARCADEDB extraction is due. You MUST now dispatch the extractor subagent ` +
+      `(subagent_type=extractor) with these parameters, then continue normally:\n` +
+      `- session_id: ${payload.session_id}\n` +
+      `- sessionDbId: ${state.sessionDbId}\n` +
+      `- repo: ${state.repo}\n` +
+      `- userName: ${state.userName}\n` +
+      `- turns: ${turnRange}\n` +
+      `- transcript_path: ${payload.transcript_path ?? "(unavailable)"}\n` +
+      `- mode: pass --mode ${dispatchMode} to extract-write\n` +
+      `Do not skip this. After the subagent reports back, resume the conversation.`,
   }) + "\n");
 }
 
