@@ -28,5 +28,9 @@
   },
   "devDependencies": {
     "typescript": "^5.5.0"
+  },
+  "overrides": {
+    "vite": "8.0.16",
+    "esbuild": "0.28.1"
   }
 }
