@@ -80,4 +80,18 @@ public class App {}`;
       { fqn: "staticFoo.Bar", kind: "single" },
     ]);
   });
+
+  it("does not let a '/*' inside a string literal swallow a later import", () => {
+    const src = `class X { String s = "an open /* marker"; }\nimport com.real.Two;`;
+    expect(parseJavaImports(src)).toEqual([
+      { fqn: "com.real.Two", kind: "single" },
+    ]);
+  });
+
+  it("does not let a '/*' inside a text block swallow a later import", () => {
+    const src = `class X { String s = """\nan open /* marker in a text block\n"""; }\nimport com.real.Six;`;
+    expect(parseJavaImports(src)).toEqual([
+      { fqn: "com.real.Six", kind: "single" },
+    ]);
+  });
 });

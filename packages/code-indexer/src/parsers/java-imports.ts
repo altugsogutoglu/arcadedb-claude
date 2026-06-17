@@ -54,6 +54,38 @@ function stripComments(src: string): string {
       i += 2;
       continue;
     }
+    // Skip literals so comment markers inside them aren't misread as comments.
+    // Text block ("""…""") first, since it starts with the same quote as a string.
+    if (c === '"' && next === '"' && src[i + 2] === '"') {
+      out += '"""';
+      i += 3;
+      while (i < n && !(src[i] === '"' && src[i + 1] === '"' && src[i + 2] === '"')) {
+        out += src[i] === "\n" ? "\n" : " ";
+        i++;
+      }
+      out += '"""';
+      i += 3;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const quote = c;
+      out += quote;
+      i++;
+      while (i < n && src[i] !== quote && src[i] !== "\n") {
+        if (src[i] === "\\") {
+          out += "  ";
+          i += 2;
+          continue;
+        }
+        out += " ";
+        i++;
+      }
+      if (i < n && src[i] === quote) {
+        out += quote;
+        i++;
+      }
+      continue;
+    }
     out += c;
     i++;
   }
