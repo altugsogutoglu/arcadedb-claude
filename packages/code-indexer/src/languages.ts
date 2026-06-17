@@ -1,14 +1,16 @@
-export type Language = "ts" | "js" | "php" | "other";
+export type Language = "ts" | "js" | "php" | "java" | "other";
 
 const TS_EXT = new Set([".ts", ".tsx"]);
 const JS_EXT = new Set([".js", ".jsx", ".mjs", ".cjs"]);
 const PHP_EXT = new Set([".php"]);
+const JAVA_EXT = new Set([".java"]);
 
 export function detectLanguage(path: string): Language {
   const ext = extOf(path);
   if (TS_EXT.has(ext)) return "ts";
   if (JS_EXT.has(ext)) return "js";
   if (PHP_EXT.has(ext)) return "php";
+  if (JAVA_EXT.has(ext)) return "java";
   return "other";
 }
 

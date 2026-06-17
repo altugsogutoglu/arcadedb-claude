@@ -19,6 +19,11 @@ describe("detectLanguage", () => {
     expect(detectLanguage("app/Models/User.php")).toBe("php");
   });
 
+  it("identifies Java files", () => {
+    expect(detectLanguage("src/main/java/com/example/Main.java")).toBe("java");
+    expect(detectLanguage("App.java")).toBe("java");
+  });
+
   it("returns 'other' for unknown extensions", () => {
     expect(detectLanguage("README.md")).toBe("other");
     expect(detectLanguage("package.json")).toBe("other");

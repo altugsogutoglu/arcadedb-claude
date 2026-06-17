@@ -26,7 +26,7 @@ What's needed is a **persistent graph** the agent can query before answering —
 | Package | What it does |
 |---|---|
 | [`arcadedb-agent-memory`](./packages/agent-memory) | Graph schemas (`:Decision`, `:Insight`, `:Session`, `:Question`, `:Answer`), thin HTTP client, memory helpers, `arcadedb-memory` CLI |
-| [`arcadedb-code-indexer`](./packages/code-indexer) | Walks a codebase (TypeScript / JavaScript / PHP today) and writes its structure (`:Repo`, `:Module`, `:File`, `:CONTAINS`, `:IMPORTS`) into a project-scoped ArcadeDB database |
+| [`arcadedb-code-indexer`](./packages/code-indexer) | Walks a codebase (TypeScript / JavaScript / PHP / Java today) and writes its structure (`:Repo`, `:Module`, `:File`, `:CONTAINS`, `:IMPORTS`) into a project-scoped ArcadeDB database |
 | [`obsidian-to-arcadedb`](./packages/obsidian-sync) | Syncs an Obsidian vault into ArcadeDB as `:Note` nodes connected by `[[wikilink]]` edges — turns your second brain into a graph the agent can traverse |
 | [`arcadedb-claude-skills`](./packages/claude-skills) | The Claude Code plugin. Auto-injects per-project graph context on every session start. Slash commands for recording decisions, querying the graph, indexing, and status |
 

@@ -101,3 +101,57 @@ describe("indexRepo (Laravel fixture)", () => {
     expect(rows[0]?.["f.unresolvedImports"] ?? "").toMatch(/Illuminate/);
   });
 });
+
+const javaRoot = resolve(__dirname, "fixtures/tiny-java");
+
+describe("indexRepo (Java fixture)", () => {
+  let jDb: TempDb;
+  beforeAll(async () => {
+    jDb = await createTempDb("e2e-java");
+    await applySchemas(client, jDb.name, ["core", "code"]);
+  });
+  afterAll(async () => { await jDb.drop(); });
+
+  it("indexes the repo and produces import counts", async () => {
+    const summary = await indexRepo(client, javaRoot, { db: jDb.name, stack: "java" });
+    expect(summary.files).toBeGreaterThan(0);
+    expect(summary.imports + summary.unresolved).toBeGreaterThan(0);
+  });
+
+  it("creates package-named modules", async () => {
+    const rows = await client.query<{ "m.name": string }>(
+      jDb.name, "cypher",
+      "MATCH (r:Repo {name: 'tiny-java'})-[:CONTAINS]->(m:Module) RETURN m.name ORDER BY m.name"
+    );
+    const names = rows.map(r => r["m.name"]);
+    expect(names).toEqual(expect.arrayContaining([
+      "com.example.app", "com.example.service", "com.example.model",
+    ]));
+  });
+
+  it("resolves a single cross-package import to a file edge", async () => {
+    const rows = await client.query<{ count: number }>(
+      jDb.name, "cypher",
+      `MATCH (a:File {path: 'tiny-java/src/main/java/com/example/service/UserService.java'})-[:IMPORTS]->(b:File {path: 'tiny-java/src/main/java/com/example/model/User.java'}) RETURN count(a) AS count`
+    );
+    expect(rows[0]?.count).toBe(1);
+  });
+
+  it("resolves a wildcard import to a module edge", async () => {
+    // Java modules are keyed by package name (dot-separated), e.g. "com.example.model",
+    // not by directory path — unlike the slash-separated module paths of other stacks.
+    const rows = await client.query<{ count: number }>(
+      jDb.name, "cypher",
+      `MATCH (a:File {path: 'tiny-java/src/main/java/com/example/app/Main.java'})-[:IMPORTS]->(m:Module {path: 'tiny-java/com.example.model'}) RETURN count(a) AS count`
+    );
+    expect(rows[0]?.count).toBe(1);
+  });
+
+  it("records the external java.util import as unresolved on Main.java", async () => {
+    const rows = await client.query<{ "f.unresolvedImports": string | null }>(
+      jDb.name, "cypher",
+      `MATCH (f:File {path: 'tiny-java/src/main/java/com/example/app/Main.java'}) RETURN f.unresolvedImports`
+    );
+    expect(rows[0]?.["f.unresolvedImports"] ?? "").toMatch(/java\.util/);
+  });
+});
