@@ -9,6 +9,16 @@ Keep a Changelog style. Newest on top. Per-package versions live in packages/*/p
 
 ### Fixed
 
+## arcadedb-claude-skills 0.6.1 - 2026-08-26
+### Fixed
+- Capture never fired: hooks keyed session state on CLAUDE_SESSION_ID (never set). Now read session_id from hook stdin.
+- Extractor sliced transcript by turn index; now dispatched with a transcript line range.
+- Extractor CLI not resolvable from foreign repos; now shipped as hooks/cli.js bundle.
+- extract-write exits 1 on live-write failure instead of folding to 0.
+### Added
+- ~/.config/arcadedb/capture.log: every trigger, skip, write, and failure.
+- `arcadedb-skills extractor-prompt` command.
+
 ## arcadedb-claude-skills 0.6.0 - 2026-06-07
 ### Added
 - Default-on live capture for session extractor.

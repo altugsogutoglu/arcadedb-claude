@@ -20,7 +20,7 @@ Full design: `docs/superpowers/specs/2026-06-17-hybrid-vector-memory-design.md`
     proven by an integration test, AND a missed/failed capture is visible (logged),
     not silent.
   - Blocks: S2-S5. Nothing else matters until capture works.
-  - Status: root cause found, fix approach pending.
+  - Status: shipped 0.6.1, awaiting real-session proof (see STATE).
 
 - **S2 - embed module**
   - Add `@xenova/transformers` + `all-MiniLM-L6-v2`. Single fn `embed(text)->float[384]`.
@@ -55,3 +55,6 @@ Full design: `docs/superpowers/specs/2026-06-17-hybrid-vector-memory-design.md`
 - **Memory poisoning / context security** (OWASP LLM08 + 2026 Agentic Top 10).
   - Why deferred: single-user local DB, low risk now. Revisit if shared/multi-user.
   - First identified: 2026-06-17.
+- **SessionStart banner should show last capture.log write timestamp**, not just
+  the env mode (banner currently says `live` regardless of health).
+  - First identified: 2026-08-26.

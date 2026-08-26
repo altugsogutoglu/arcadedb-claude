@@ -1,6 +1,6 @@
 # Project State
 
-**Last updated:** 2026-06-17
+**Last updated:** 2026-08-26
 **Phase:** 1 - Revive + go hybrid
 **Branch:** main
 
@@ -11,26 +11,35 @@ every session into a self-owned ArcadeDB graph, and lets Claude recall them by
 meaning (vector/semantic) and by relationship (graph). Hybrid memory. Own DB.
 Intended long-term as an alternative to claude-mem's vector-only model.
 
-## Ground truth (verified 2026-06-17, with reproduction)
+## Ground truth (verified 2026-06-17, with reproduction; fix shipped 2026-08-26)
 
-- **Capture is dead.** `claude_memory` graph has 2 Decisions + 4 Insights,
-  all dated 2026-05-17. Zero writes since, despite major sessions Jun 7 + Jun 17.
-  Extractor banner says `live` but nothing lands.
-- **ROOT CAUSE (verified, not the swallow):** the extractor subagent has NEVER
-  run `extract-write` in a real session. Proof: the `dryrun-writer` writes a JSONL
-  audit batch on every extract-write call; `~/.config/arcadedb/dryrun/` was empty
-  until a manual repro today. Zero batches across weeks = zero dispatches.
-- **Where it breaks:** capture's only trigger is the Stop hook. It increments a
+- **Capture fixed in 0.6.1 (root cause: CLAUDE_SESSION_ID never set for hooks).
+  Proof pending: first real session write.** Hooks keyed all session state on the
+  `CLAUDE_SESSION_ID` env var, which Claude Code never sets for hooks. Every state
+  file landed as `local-<uuid>.json`, so the Stop hook could never find the right
+  state and the turn counter never advanced. Fixed: hooks now read `session_id`,
+  `cwd`, and `transcript_path` from hook stdin JSON (`src/hook-input.ts`).
+- **Where it broke:** capture's only trigger is the Stop hook. It increments a
   per-session turn counter and, when `shouldExtract` trips (delta >= 10 turns, or
   delta > 0 and >= 15 min since last), emits `decision: block` instructing the main
-  agent to dispatch the extractor subagent. The trigger never results in a dispatch:
-  recent session state shows `currentTurnIdx: 0` (counter not advancing) and no
-  audit batch ever appears. session-end.js does NOT extract (only ends the session,
-  and needs `CLAUDE_SESSION_ID`).
+  agent to dispatch the extractor subagent. Because state was keyed on the wrong id,
+  this never resolved to a real session's state. session-end.js does NOT extract
+  (only ends the session).
+- **Also fixed alongside root cause:** Stop hook now dispatches a transcript line
+  range (`lines A..B`) plus `turn` and the bundled CLI path, instead of slicing by
+  turn index (wrong). Extractor CLI ships as self-contained `hooks/cli.js` (installed
+  plugin has no dist/ or node_modules). `extract-write --lines --turn` marks state
+  itself, including on validation failure and on live failure, so a bad range is
+  never retried every turn, and exits 1 on live-write failure (stderr + `write_failed`
+  log) instead of folding to exit 0. New `~/.config/arcadedb/capture.log`: JSONL of
+  every `skip` (off, stop_hook_active, no_session_id, no_state, not_due), `trigger`,
+  `write`, `write_failed`, `validation_failed`. e2e test `tests/capture-e2e.test.ts`
+  proves session-start -> 10 stops -> extract-write live -> node in graph.
 - **The CLI works.** Ran `extract-write --mode live` by hand 2026-06-17: wrote a
   node to `claude_memory` (`written:1, failed:0`). DB, env, cypher, write path all fine.
-- **The swallow (`8974b56`) is a red herring for now** - it only masks live-write
-  failures, but the live write is never even reached because dispatch never happens.
+- **The swallow (`8974b56`) was a red herring, not the root cause** - it masked
+  live-write failures, but the live write was never even reached because dispatch
+  never happened. Fixed anyway in 0.6.1 (exit 1 on live-write failure).
 - **No vector layer exists.** Nodes store plain text (`summary`, `rationale`,
   `text`, `topic`). No `embedding` property, no vector index. The "semantic
   search / pattern finding" capability was never built.
@@ -43,14 +52,11 @@ Intended long-term as an alternative to claude-mem's vector-only model.
 
 ## Active Work
 
-- Brainstorm complete. Design approved. Spec at
-  `docs/superpowers/specs/2026-06-17-hybrid-vector-memory-design.md`.
-- Next: writing-plans -> implementation, starting S1.
+- S1 shipped in 0.6.1, awaiting real-session proof.
 
 ## Next Up
 
-- **S1 - Fix capture** (unblocks everything). Find the exit-0 swallow, prove one
-  real session writes to the graph.
+- S2 embed module.
 
 ## Open Questions
 

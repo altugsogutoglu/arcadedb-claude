@@ -12,5 +12,5 @@ Inventory of shipped and planned features. Status: shipped | partial | planned |
 | /graph-status | claude-skills | shipped | |
 | Code indexer TS/JS/PHP/Java | code-indexer | shipped | Java added PR #2 |
 | Obsidian vault sync | obsidian-sync | shipped | |
-| LLM session extractor (live) | claude-skills | broken | see STATE.md ground truth |
+| LLM session extractor (live) | claude-skills | fixed 0.6.1, real-session proof pending | see STATE.md ground truth |
 | Vector / semantic recall | agent-memory | planned | ADR-0001, spec 2026-06-17 |

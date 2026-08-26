@@ -5,6 +5,54 @@ entries; write new ADRs in `decisions/` to supersede past decisions.
 
 ---
 
+## 2026-08-26 - Session: Shipped S1 capture fix (0.6.1)
+
+**Topic:** Implemented and released the S1 capture-fix plan. Found the real root
+cause behind the dead extractor and shipped the fix.
+
+**Found:**
+- Root cause was not the exit-0 swallow diagnosed on 2026-06-17. Hooks keyed all
+  session state on `CLAUDE_SESSION_ID`, an env var Claude Code never sets for
+  hooks. Every state file landed as `local-<uuid>.json`, so the Stop hook never
+  found the real session's state and the turn counter never advanced. Capture
+  never fired, full stop.
+- Second bug found along the way: the extractor was dispatched with a turn index
+  but sliced the transcript by turn index (wrong unit). Fixed to dispatch a
+  transcript line range instead.
+- Third bug: the extractor CLI wasn't resolvable once installed as a plugin (no
+  dist/ or node_modules in the installed cache). Needed a self-contained bundle.
+
+**Built:**
+- Hooks now read `session_id`, `cwd`, `transcript_path` from hook stdin JSON
+  (`src/hook-input.ts`) instead of env vars.
+- Stop hook dispatches `lines A..B` + `turn` + the bundled CLI path.
+- Extractor CLI ships as self-contained `hooks/cli.js`; `agents/extractor.md`
+  uses `<cli>`; new `extractor-prompt` command.
+- `extract-write --lines --turn` marks state on success, validation failure, and
+  live-write failure alike (a bad range is never silently retried every turn).
+  Exits 1 on live-write failure (stderr + `write_failed` log) instead of folding
+  to exit 0.
+- New `~/.config/arcadedb/capture.log`: JSONL of every `skip` (with reason),
+  `trigger`, `write`, `write_failed`, `validation_failed`.
+- e2e test `tests/capture-e2e.test.ts`: session-start -> 10 stops -> extract-write
+  live -> node lands in the graph.
+- Released `arcadedb-claude-skills` 0.6.1. `npm run build` and `npm test` both
+  clean (129/129 tests passing).
+
+**Decided:**
+- Ship the fix now and prove it in a real session as a separate, user-driven step
+  (reinstall the plugin, run a real 10+ turn session, check capture.log and the
+  graph) rather than block the release on that manual proof.
+- Left the SessionStart banner's "live" claim unfixed - it reports env mode, not
+  actual health. Deferred to BACKLOG: show last capture.log write timestamp
+  instead.
+
+**Next:**
+- User reinstalls the plugin and runs a real session to prove S1 end to end, then
+  records the proof in STATE.md. After that, S2 (embed module).
+
+---
+
 ## 2026-06-17 - Session: Diagnosed dead capture, designed hybrid revival
 
 **Topic:** User noticed arcadedb-claude "does nothing" vs claude-mem. Diagnosed,
