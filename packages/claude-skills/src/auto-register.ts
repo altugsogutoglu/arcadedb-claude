@@ -33,8 +33,9 @@ export function detectStack(cwd: string): string[] {
   const isExpo = EXPO_CONFIGS.some(name => has(name) && fileMentionsExpo(join(cwd, name)));
   if (isExpo) stack.push("expo");
 
-  if (has("tsconfig.json")) stack.push("typescript");
-  if (has("package.json") && !isNext && !isExpo) stack.push("javascript");
+  const isTs = has("tsconfig.json");
+  if (isTs) stack.push("typescript");
+  if (has("package.json") && !isNext && !isExpo && !isTs) stack.push("javascript");
   if (has("pyproject.toml") || has("requirements.txt")) stack.push("python");
 
   return stack;
@@ -58,11 +59,11 @@ export function registerProject(projectsPath: string, key: string, entry: Projec
   writeFileSync(projectsPath, JSON.stringify(map, null, 2) + "\n");
 }
 
-export function isGitRepo(cwd: string): boolean {
+export function gitToplevel(cwd: string): string | null {
   try {
-    execSync("git rev-parse --is-inside-work-tree", { cwd, stdio: "ignore" });
-    return true;
+    const out = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return out.trim() || null;
   } catch {
-    return false;
+    return null;
   }
 }

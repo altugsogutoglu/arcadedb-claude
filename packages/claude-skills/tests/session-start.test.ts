@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -255,12 +255,16 @@ describe("session-start hook — auto-registration", () => {
     const repoDir = mkdtempSync(join(tmpdir(), "arcadedb-autoproj-"));
     execFileSync("git", ["init", "-q"], { cwd: repoDir, stdio: "ignore" });
     execFileSync("git", ["remote", "add", "origin", "git@github.com:x/auto-proj.git"], { cwd: repoDir, stdio: "ignore" });
+    const repoRoot = realpathSync(repoDir);
+    // Start the session from a subdirectory: the repo root must be what gets registered.
+    const subDir = join(repoDir, "packages", "sub");
+    mkdirSync(subDir, { recursive: true });
     autoDbs.add("auto_proj");
 
     try {
       const first = await runWithStdin(
         "src/session-start.ts",
-        JSON.stringify({ session_id: "auto-sess-1", cwd: repoDir, hook_event_name: "SessionStart", source: "startup" }),
+        JSON.stringify({ session_id: "auto-sess-1", cwd: subDir, hook_event_name: "SessionStart", source: "startup" }),
         { HOME: tmpHome, PWD: "/unrelated/dir" },
       );
       expect(first.code).toBe(0);
@@ -270,14 +274,17 @@ describe("session-start hook — auto-registration", () => {
 
       const parsed = JSON.parse(readFileSync(projectsPath, "utf8"));
       expect(parsed.projects["auto-proj"].db).toBe("auto_proj");
-      expect(parsed.projects["auto-proj"].path).toBe(repoDir);
+      expect(parsed.projects["auto-proj"].path).toBe(repoRoot);
       expect(parsed.projects["auto-proj"].indexLevel).toBe(0);
       expect(parsed.projects["auto-proj"].lastIndexed).toBe(null);
       expect(parsed.defaultMemoryDb).toBe(memoryDb.name);
 
       const statePath = join(tmpHome, ".config", "arcadedb", "sessions", "auto-sess-1.json");
       expect(existsSync(statePath)).toBe(true);
-      expect(JSON.parse(readFileSync(statePath, "utf8")).repo).toBe("auto-proj");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      expect(state.repo).toBe("auto-proj");
+      // The state file keeps the real session cwd, not the repo root.
+      expect(state.cwd).toBe(subDir);
 
       expect(await client.listDatabases()).toContain("auto_proj");
 
@@ -285,7 +292,7 @@ describe("session-start hook — auto-registration", () => {
       const before = readFileSync(projectsPath, "utf8");
       const second = await runWithStdin(
         "src/session-start.ts",
-        JSON.stringify({ session_id: "auto-sess-2", cwd: repoDir, hook_event_name: "SessionStart", source: "startup" }),
+        JSON.stringify({ session_id: "auto-sess-2", cwd: subDir, hook_event_name: "SessionStart", source: "startup" }),
         { HOME: tmpHome, PWD: "/unrelated/dir" },
       );
       expect(second.code).toBe(0);

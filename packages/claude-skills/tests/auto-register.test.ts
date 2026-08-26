@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveProjectIdentity, detectStack, registerProject, isGitRepo } from "../src/auto-register.js";
+import { deriveProjectIdentity, detectStack, registerProject, gitToplevel } from "../src/auto-register.js";
 import type { ProjectEntry } from "../src/project-map.js";
 
 let dir: string;
@@ -79,10 +79,15 @@ describe("detectStack", () => {
     expect(detectStack(dir)).toEqual(["javascript"]);
   });
 
-  it("detects typescript plus javascript for a plain ts package", () => {
+  it("detects typescript only, not javascript, for a ts package", () => {
     writeFileSync(join(dir, "tsconfig.json"), "{}");
     writeFileSync(join(dir, "package.json"), "{}");
-    expect(detectStack(dir)).toEqual(["typescript", "javascript"]);
+    expect(detectStack(dir)).toEqual(["typescript"]);
+  });
+
+  it("detects javascript for a package.json with no other JS-side marker", () => {
+    writeFileSync(join(dir, "package.json"), "{}");
+    expect(detectStack(dir)).toEqual(["javascript"]);
   });
 
   it("detects python from pyproject.toml", () => {
@@ -152,17 +157,24 @@ describe("registerProject", () => {
   });
 });
 
-describe("isGitRepo", () => {
-  it("is true inside a git repo", () => {
+describe("gitToplevel", () => {
+  it("returns the repo root from the repo root", () => {
     execSync("git init -q", { cwd: dir, stdio: "ignore" });
-    expect(isGitRepo(dir)).toBe(true);
+    expect(gitToplevel(dir)).toBe(realpathSync(dir));
   });
 
-  it("is false for a plain dir", () => {
-    expect(isGitRepo(dir)).toBe(false);
+  it("returns the repo root from a subdirectory", () => {
+    execSync("git init -q", { cwd: dir, stdio: "ignore" });
+    const sub = join(dir, "packages", "deep");
+    mkdirSync(sub, { recursive: true });
+    expect(gitToplevel(sub)).toBe(realpathSync(dir));
   });
 
-  it("is false for a nonexistent dir", () => {
-    expect(isGitRepo(join(dir, "nope"))).toBe(false);
+  it("is null for a plain dir", () => {
+    expect(gitToplevel(dir)).toBe(null);
+  });
+
+  it("is null for a nonexistent dir", () => {
+    expect(gitToplevel(join(dir, "nope"))).toBe(null);
   });
 });

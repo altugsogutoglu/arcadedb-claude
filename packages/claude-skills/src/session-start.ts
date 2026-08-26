@@ -13,7 +13,7 @@ import {
 } from "arcadedb-agent-memory";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { loadProjects, findProject, type FindResult, type ProjectEntry } from "./project-map.js";
-import { deriveProjectIdentity, detectStack, registerProject, isGitRepo } from "./auto-register.js";
+import { deriveProjectIdentity, detectStack, registerProject, gitToplevel } from "./auto-register.js";
 import {
   buildContext,
   type ProjectContext,
@@ -36,19 +36,22 @@ async function main(): Promise<void> {
 
   let project: FindResult | null = match;
   let autoRegistered = false;
-  if (!match && isGitRepo(cwd)) {
-    const identity = deriveProjectIdentity(cwd, remote);
+  const toplevel = match ? null : gitToplevel(cwd);
+  if (toplevel) {
+    // Register the repo root, not the subdirectory this session happens to start in.
+    const identity = deriveProjectIdentity(toplevel, remote);
     try {
       const entry: ProjectEntry = {
         db: identity.db,
-        path: cwd,
-        stack: detectStack(cwd),
+        path: toplevel,
+        stack: detectStack(toplevel),
         indexLevel: 0,
         lastIndexed: null,
       };
-      registerProject(projectsJsonPath(), identity.key, entry);
+      // Schemas first: a failure here must leave projects.json untouched.
       await applySchemas(client, identity.db, ["core", "code"]);
-      logCapture("project_registered", { key: identity.key, db: identity.db, cwd });
+      registerProject(projectsJsonPath(), identity.key, entry);
+      logCapture("project_registered", { key: identity.key, db: identity.db, path: toplevel, cwd });
       project = { key: identity.key, entry };
       autoRegistered = true;
     } catch (err) {

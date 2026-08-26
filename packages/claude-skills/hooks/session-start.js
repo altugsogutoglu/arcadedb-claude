@@ -506,8 +506,9 @@ function detectStack(cwd) {
   if (isNext) stack.push("nextjs");
   const isExpo = EXPO_CONFIGS.some((name) => has(name) && fileMentionsExpo(join3(cwd, name)));
   if (isExpo) stack.push("expo");
-  if (has("tsconfig.json")) stack.push("typescript");
-  if (has("package.json") && !isNext && !isExpo) stack.push("javascript");
+  const isTs = has("tsconfig.json");
+  if (isTs) stack.push("typescript");
+  if (has("package.json") && !isNext && !isExpo && !isTs) stack.push("javascript");
   if (has("pyproject.toml") || has("requirements.txt")) stack.push("python");
   return stack;
 }
@@ -528,12 +529,12 @@ function registerProject(projectsPath, key, entry) {
   if (!existsSync3(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(projectsPath, JSON.stringify(map, null, 2) + "\n");
 }
-function isGitRepo(cwd) {
+function gitToplevel(cwd) {
   try {
-    execSync("git rev-parse --is-inside-work-tree", { cwd, stdio: "ignore" });
-    return true;
+    const out = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return out.trim() || null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -666,19 +667,20 @@ async function main() {
   const client = new Client(env);
   let project = match;
   let autoRegistered = false;
-  if (!match && isGitRepo(cwd)) {
-    const identity = deriveProjectIdentity(cwd, remote);
+  const toplevel = match ? null : gitToplevel(cwd);
+  if (toplevel) {
+    const identity = deriveProjectIdentity(toplevel, remote);
     try {
       const entry = {
         db: identity.db,
-        path: cwd,
-        stack: detectStack(cwd),
+        path: toplevel,
+        stack: detectStack(toplevel),
         indexLevel: 0,
         lastIndexed: null
       };
-      registerProject(projectsJsonPath(), identity.key, entry);
       await applySchemas(client, identity.db, ["core", "code"]);
-      logCapture("project_registered", { key: identity.key, db: identity.db, cwd });
+      registerProject(projectsJsonPath(), identity.key, entry);
+      logCapture("project_registered", { key: identity.key, db: identity.db, path: toplevel, cwd });
       project = { key: identity.key, entry };
       autoRegistered = true;
     } catch (err) {
