@@ -35,4 +35,8 @@ describe("hooks.json", () => {
   it("ships a bundled cli at hooks/cli.js", () => {
     expect(existsSync(join(__dirname, "..", "hooks", "cli.js"))).toBe(true);
   });
+
+  it("ships a bundled indexer at hooks/index.js", () => {
+    expect(existsSync(join(__dirname, "..", "hooks", "index.js"))).toBe(true);
+  });
 });

@@ -30,6 +30,8 @@ import {
 import { writeSessionState, readSessionState } from "./session-state.js";
 import { readHookInput } from "./hook-input.js";
 import { countTranscriptLines } from "./transcript-lines.js";
+import { decideIndexNeed, stalePath } from "./index-need.js";
+import { spawnIndexer } from "./index-spawn.js";
 import { logCapture } from "./capture-log.js";
 
 async function main(): Promise<void> {
@@ -102,10 +104,21 @@ async function main(): Promise<void> {
     }
   }
 
+  let indexing = false;
+  if (project && project.entry.path) {
+    const need = decideIndexNeed(project.entry, project.key, stalePath(), cfg.autoIndex);
+    if (need.needed) {
+      const pid = spawnIndexer({ root: project.entry.path, db: project.entry.db, key: project.key, stack: project.entry.stack });
+      indexing = pid !== null;
+      logCapture("index_spawned", { key: project.key, reason: need.reason, staleEdits: need.staleEdits, pid });
+    }
+  }
+
   let projectCtx: ProjectContext | null = null;
   if (project) {
     projectCtx = await probeProject(client, project.entry.db, project.key, project.entry.lastIndexed);
     if (autoRegistered) projectCtx.autoRegistered = true;
+    if (indexing) projectCtx.indexing = true;
   }
   const memoryCtx = await probeMemory(client, memoryDb);
 

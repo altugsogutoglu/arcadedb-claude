@@ -282,7 +282,8 @@ describe("session-start hook - auto-registration", () => {
       const first = await runWithStdin(
         "src/session-start.ts",
         JSON.stringify({ session_id: "auto-sess-1", cwd: subDir, hook_event_name: "SessionStart", source: "startup" }),
-        { HOME: tmpHome, PWD: "/unrelated/dir" },
+        // Auto-index off: this test pins the registration wording, the spawn tests below cover indexing.
+        { HOME: tmpHome, PWD: "/unrelated/dir", ARCADEDB_AUTO_INDEX: "off" },
       );
       expect(first.code).toBe(0);
       expect(first.stdout).toMatch(/Project: auto-proj/);
@@ -310,7 +311,7 @@ describe("session-start hook - auto-registration", () => {
       const second = await runWithStdin(
         "src/session-start.ts",
         JSON.stringify({ session_id: "auto-sess-2", cwd: subDir, hook_event_name: "SessionStart", source: "startup" }),
-        { HOME: tmpHome, PWD: "/unrelated/dir" },
+        { HOME: tmpHome, PWD: "/unrelated/dir", ARCADEDB_AUTO_INDEX: "off" },
       );
       expect(second.code).toBe(0);
       expect(readFileSync(projectsPath, "utf8")).toBe(before);
@@ -362,7 +363,7 @@ describe("session-start hook - auto-registration", () => {
       const { stdout, code } = await runWithStdin(
         "src/session-start.ts",
         JSON.stringify({ session_id: "preseed-sess-1", cwd: subDir, hook_event_name: "SessionStart", source: "startup" }),
-        { HOME: tmpHome, PWD: "/unrelated/dir" },
+        { HOME: tmpHome, PWD: "/unrelated/dir", ARCADEDB_AUTO_INDEX: "off" },
       );
       expect(code).toBe(0);
       expect(stdout).toMatch(new RegExp(`Project: ${identity.key}`));
@@ -406,7 +407,52 @@ describe("session-start hook - auto-registration", () => {
       rmSync(repoDir, { recursive: true, force: true });
     }
   });
+
+  it("spawns the background indexer on first registration and reports indexing in the banner", async () => {
+    writeConfig({}, memoryDb.name);
+    const repoDir = makeIndexableRepo("auto-proj");
+    autoDbs.add("auto_proj");
+    try {
+      const { stdout } = await runWithStdin("src/session-start.ts", JSON.stringify({ session_id: "spawn-1", cwd: repoDir }), { HOME: tmpHome });
+      expect(stdout).toMatch(/Project: auto-proj \(DB: auto_proj, indexing in background/);
+      const deadline = Date.now() + 30000;
+      let done = false;
+      while (Date.now() < deadline && !done) {
+        const log = existsSync(join(tmpHome, ".config", "arcadedb", "capture.log")) ? readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8") : "";
+        done = log.includes('"event":"index_done"');
+        if (!done) await new Promise(r => setTimeout(r, 500));
+      }
+      expect(done).toBe(true);
+      const projects = JSON.parse(readFileSync(join(tmpHome, ".config", "arcadedb", "projects.json"), "utf8"));
+      expect(projects.projects["auto-proj"].lastIndexed).toMatch(/^\d{4}-/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not spawn when ARCADEDB_AUTO_INDEX=off", async () => {
+    writeConfig({}, memoryDb.name);
+    const repoDir = makeIndexableRepo("auto-proj");
+    autoDbs.add("auto_proj");
+    try {
+      const { stdout } = await runWithStdin("src/session-start.ts", JSON.stringify({ session_id: "spawn-2", cwd: repoDir }), { HOME: tmpHome, ARCADEDB_AUTO_INDEX: "off" });
+      expect(stdout).not.toContain("indexing in background");
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
 });
+
+function makeIndexableRepo(name: string): string {
+  const repoDir = mkdtempSync(join(tmpdir(), "arcadedb-autoproj-"));
+  execFileSync("git", ["init", "-q"], { cwd: repoDir, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", `git@github.com:x/${name}.git`], { cwd: repoDir, stdio: "ignore" });
+  mkdirSync(join(repoDir, "src"), { recursive: true });
+  writeFileSync(join(repoDir, "src", "a.ts"), 'import { b } from "./b.js";\nexport const a = b;\n');
+  writeFileSync(join(repoDir, "src", "b.ts"), "export const b = 1;\n");
+  writeFileSync(join(repoDir, "package.json"), '{"name":"auto-proj","type":"module"}');
+  return repoDir;
+}
 
 describe("session-start hook - bootstrap", () => {
   it("cold HOME: creates .env with defaults and reports no_password when a server is reachable", async () => {

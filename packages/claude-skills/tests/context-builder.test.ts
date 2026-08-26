@@ -107,6 +107,12 @@ describe("buildContext - auto-registered project", () => {
     expect(text).toMatch(/indexed: 2026-08-27, 5 files, 2 imports/);
   });
 
+  it("reports background indexing ahead of the auto-registered wording", () => {
+    const text = buildContext({ project: { ...base, lastIndexed: null, autoRegistered: true, indexing: true, fileCount: 3 }, memory });
+    expect(text).toMatch(/Project: auto-proj \(DB: auto_proj, indexing in background, 3 files so far\)/);
+    expect(text).not.toMatch(/auto-registered/);
+  });
+
   it("uses the normal wording for a plain unindexed project", () => {
     const text = buildContext({ project: { ...base, lastIndexed: null }, memory });
     expect(text).not.toMatch(/auto-registered/);

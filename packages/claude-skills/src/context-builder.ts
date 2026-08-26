@@ -6,6 +6,7 @@ export interface ProjectContext {
   importCount: number;
   types: string[];
   autoRegistered?: boolean;
+  indexing?: boolean;
 }
 
 export interface MemoryContext {
@@ -26,7 +27,11 @@ export function buildContext(input: ContextInput): string {
   if (input.serverLine) lines.push(input.serverLine);
   if (input.project) {
     const p = input.project;
-    if (p.autoRegistered && p.lastIndexed === null) {
+    if (p.indexing) {
+      lines.push(
+        `  Project: ${p.name} (DB: ${p.db}, indexing in background, ${p.fileCount} files so far)`
+      );
+    } else if (p.autoRegistered && p.lastIndexed === null) {
       lines.push(
         `  Project: ${p.name} (DB: ${p.db}, auto-registered, not indexed yet, run /graph-index to index code)`
       );

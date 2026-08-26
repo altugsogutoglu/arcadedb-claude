@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // src/session-start.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync6, mkdirSync as mkdirSync4 } from "node:fs";
-import { dirname as dirname4 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync7, mkdirSync as mkdirSync5 } from "node:fs";
+import { dirname as dirname6 } from "node:path";
 import { execSync as execSync2 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 
@@ -84,37 +84,9 @@ var Client = class {
 };
 
 // ../agent-memory/dist/src/env.js
-import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var DEFAULT_PATH = join(homedir(), ".config", "arcadedb", ".env");
-function loadEnv(path = DEFAULT_PATH) {
-  if (!existsSync(path)) {
-    throw new Error(`Env file not found at ${path}. Create it with ARCADEDB_ROOT_PASSWORD=<your-password>.`);
-  }
-  const raw = readFileSync(path, "utf8");
-  const map = {};
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#"))
-      continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1)
-      continue;
-    const key = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim();
-    map[key] = value;
-  }
-  const password = map["ARCADEDB_ROOT_PASSWORD"];
-  if (!password) {
-    throw new Error(`ARCADEDB_ROOT_PASSWORD missing in ${path}.`);
-  }
-  return {
-    password,
-    httpUri: map["ARCADEDB_HTTP_URI"] ?? "http://localhost:2480",
-    username: map["ARCADEDB_USERNAME"] ?? "root"
-  };
-}
 
 // ../agent-memory/dist/src/schemas/core.js
 var coreSchema = {
@@ -421,6 +393,10 @@ async function linkFollows(client, db, laterSessionId, earlierSessionId) {
   await client.execute(db, "cypher", cypher);
 }
 
+// src/config.ts
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, chmodSync } from "node:fs";
+import { dirname, join as join3 } from "node:path";
+
 // src/env-paths.ts
 import { homedir as homedir2 } from "node:os";
 import { join as join2 } from "node:path";
@@ -441,6 +417,133 @@ function sessionStatePath(claudeCodeSessionId) {
 }
 function captureLogPath() {
   return join2(configDir(), "capture.log");
+}
+
+// src/config.ts
+var DEFAULTS = {
+  httpUri: "http://localhost:2480",
+  username: "root",
+  memoryDb: "claude_memory",
+  autoIndex: true
+};
+var KEYS = {
+  httpUri: "ARCADEDB_HTTP_URI",
+  username: "ARCADEDB_USERNAME",
+  password: "ARCADEDB_ROOT_PASSWORD",
+  memoryDb: "ARCADEDB_MEMORY_DB",
+  autoIndex: "ARCADEDB_AUTO_INDEX"
+};
+function envFilePath() {
+  return join3(configDir(), ".env");
+}
+function readEnvFile(path = envFilePath()) {
+  if (!existsSync(path)) return {};
+  const map = {};
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const eq = t.indexOf("=");
+    if (eq === -1) continue;
+    map[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
+  }
+  return map;
+}
+function writeEnvFile(values, path = envFilePath()) {
+  const merged = { ...readEnvFile(path), ...values };
+  const body = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
+  if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, body, { mode: 384 });
+  chmodSync(tmp, 384);
+  renameSync(tmp, path);
+}
+function ensureEnvFile(path = envFilePath()) {
+  if (existsSync(path)) return false;
+  writeEnvFile({
+    [KEYS.httpUri]: DEFAULTS.httpUri,
+    [KEYS.username]: DEFAULTS.username,
+    [KEYS.password]: ""
+  }, path);
+  return true;
+}
+function pick(key, processEnv, file, fallback) {
+  const fromEnv = processEnv[key];
+  if (fromEnv !== void 0 && fromEnv !== "") return { value: fromEnv, source: "env" };
+  const fromFile = file[key];
+  if (fromFile !== void 0 && fromFile !== "") return { value: fromFile, source: "file" };
+  return { value: fallback, source: "default" };
+}
+function resolveConfig(opts = {}) {
+  const envPath = opts.envPath ?? envFilePath();
+  const processEnv = opts.processEnv ?? process.env;
+  const file = readEnvFile(envPath);
+  const httpUri = pick(KEYS.httpUri, processEnv, file, DEFAULTS.httpUri);
+  const username = pick(KEYS.username, processEnv, file, DEFAULTS.username);
+  const password = pick(KEYS.password, processEnv, file, "");
+  const memoryDb = pick(KEYS.memoryDb, processEnv, file, DEFAULTS.memoryDb);
+  const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
+  return {
+    httpUri: httpUri.value.replace(/\/+$/, ""),
+    username: username.value,
+    password: password.value,
+    memoryDb: memoryDb.value,
+    autoIndex: autoIndexRaw.value.toLowerCase() !== "off",
+    envPath,
+    sources: {
+      httpUri: httpUri.source,
+      username: username.source,
+      password: password.source,
+      memoryDb: memoryDb.source,
+      autoIndex: autoIndexRaw.source
+    }
+  };
+}
+function toClientEnv(cfg) {
+  return { httpUri: cfg.httpUri, username: cfg.username, password: cfg.password };
+}
+
+// src/server-probe.ts
+async function get(url, headers, timeoutMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers, signal: ctrl.signal });
+    return { status: res.status };
+  } catch (e) {
+    return { error: e.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function probeServer(cfg, timeoutMs = 2e3) {
+  const started = Date.now();
+  const ready = await get(`${cfg.httpUri}/api/v1/ready`, {}, timeoutMs);
+  if ("error" in ready || ready.status < 200 || ready.status >= 300) {
+    return { status: "unreachable", httpUri: cfg.httpUri, latencyMs: Date.now() - started, detail: "error" in ready ? ready.error : `HTTP ${ready.status}` };
+  }
+  if (cfg.password === "") {
+    return { status: "no_password", httpUri: cfg.httpUri, latencyMs: Date.now() - started };
+  }
+  const auth = "Basic " + Buffer.from(`${cfg.username}:${cfg.password}`).toString("base64");
+  const dbs = await get(`${cfg.httpUri}/api/v1/databases`, { Authorization: auth }, timeoutMs);
+  const latencyMs = Date.now() - started;
+  if ("error" in dbs) return { status: "unreachable", httpUri: cfg.httpUri, latencyMs, detail: dbs.error };
+  if (dbs.status === 401 || dbs.status === 403) return { status: "unauthorized", httpUri: cfg.httpUri, latencyMs };
+  if (dbs.status >= 200 && dbs.status < 300) return { status: "ok", httpUri: cfg.httpUri, latencyMs };
+  return { status: "unreachable", httpUri: cfg.httpUri, latencyMs, detail: `HTTP ${dbs.status}` };
+}
+var OFF_LINE = "  Capture and code graph are off until then.";
+function probeBanner(r, username) {
+  switch (r.status) {
+    case "ok":
+      return [`  Server: ${r.httpUri} (ok, ${r.latencyMs} ms)`];
+    case "unreachable":
+      return [`ArcadeDB: server not reachable at ${r.httpUri}. Start ArcadeDB or run: /arcadedb-config set server http://host:port`, OFF_LINE];
+    case "no_password":
+      return [`ArcadeDB: server reachable at ${r.httpUri} but no password configured. Run: /arcadedb-config set password <root-password>`, OFF_LINE];
+    case "unauthorized":
+      return [`ArcadeDB: authentication failed at ${r.httpUri} for user ${username}. Run: /arcadedb-config set password <root-password>`, OFF_LINE];
+  }
 }
 
 // src/project-map.ts
@@ -485,8 +588,8 @@ function extractRemoteName(url) {
 }
 
 // src/auto-register.ts
-import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, renameSync, writeFileSync } from "node:fs";
-import { basename as basename2, dirname, join as join3 } from "node:path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename as basename2, dirname as dirname2, join as join4 } from "node:path";
 import { execSync } from "node:child_process";
 function deriveProjectIdentity(cwd, gitRemoteUrl) {
   const key = (gitRemoteUrl ? extractRemoteName(gitRemoteUrl) : null) ?? basename2(cwd);
@@ -500,11 +603,11 @@ var NEXT_CONFIGS = ["next.config.js", "next.config.mjs", "next.config.ts"];
 var EXPO_CONFIGS = ["app.json", "app.config.js", "app.config.ts"];
 function detectStack(cwd) {
   const stack = [];
-  const has = (name) => existsSync3(join3(cwd, name));
+  const has = (name) => existsSync3(join4(cwd, name));
   if (has("composer.json")) stack.push("laravel");
   const isNext = NEXT_CONFIGS.some(has);
   if (isNext) stack.push("nextjs");
-  const isExpo = EXPO_CONFIGS.some((name) => has(name) && fileMentionsExpo(join3(cwd, name)));
+  const isExpo = EXPO_CONFIGS.some((name) => has(name) && fileMentionsExpo(join4(cwd, name)));
   if (isExpo) stack.push("expo");
   const isTs = has("tsconfig.json");
   if (isTs) stack.push("typescript");
@@ -528,6 +631,13 @@ var RegistrationError = class extends Error {
   }
   reason;
 };
+function writeProjectsFile(projectsPath, map) {
+  const dir = dirname2(projectsPath);
+  if (!existsSync3(dir)) mkdirSync2(dir, { recursive: true });
+  const tmp = `${projectsPath}.tmp`;
+  writeFileSync2(tmp, JSON.stringify(map, null, 2) + "\n");
+  renameSync2(tmp, projectsPath);
+}
 function registerProject(projectsPath, key, entry) {
   const map = loadProjects(projectsPath, (err) => {
     throw err;
@@ -536,11 +646,7 @@ function registerProject(projectsPath, key, entry) {
   if (existing) return { entry: existing, created: false };
   if (entry.db === map.defaultMemoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
   map.projects[key] = entry;
-  const dir = dirname(projectsPath);
-  if (!existsSync3(dir)) mkdirSync(dir, { recursive: true });
-  const tmp = `${projectsPath}.tmp`;
-  writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n");
-  renameSync(tmp, projectsPath);
+  writeProjectsFile(projectsPath, map);
   return { entry, created: true };
 }
 function gitToplevel(cwd) {
@@ -555,9 +661,14 @@ function gitToplevel(cwd) {
 // src/context-builder.ts
 function buildContext(input) {
   const lines = ["ArcadeDB context loaded:"];
+  if (input.serverLine) lines.push(input.serverLine);
   if (input.project) {
     const p = input.project;
-    if (p.autoRegistered && p.lastIndexed === null) {
+    if (p.indexing) {
+      lines.push(
+        `  Project: ${p.name} (DB: ${p.db}, indexing in background, ${p.fileCount} files so far)`
+      );
+    } else if (p.autoRegistered && p.lastIndexed === null) {
       lines.push(
         `  Project: ${p.name} (DB: ${p.db}, auto-registered, not indexed yet, run /graph-index to index code)`
       );
@@ -583,8 +694,8 @@ function extractorLine(extractorMode) {
 }
 
 // src/session-state.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname as dirname2 } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { dirname as dirname3 } from "node:path";
 function readSessionState(claudeCodeSessionId) {
   const path = sessionStatePath(claudeCodeSessionId);
   if (!existsSync4(path)) return null;
@@ -601,14 +712,14 @@ function readSessionState(claudeCodeSessionId) {
 }
 function writeSessionState(state) {
   const path = sessionStatePath(state.claudeCodeSessionId);
-  const dir = dirname2(path);
-  if (!existsSync4(dir)) mkdirSync2(dir, { recursive: true });
-  writeFileSync2(path, JSON.stringify(state, null, 2) + "\n");
+  const dir = dirname3(path);
+  if (!existsSync4(dir)) mkdirSync3(dir, { recursive: true });
+  writeFileSync3(path, JSON.stringify(state, null, 2) + "\n");
 }
 
 // src/hook-input.ts
 import { readFileSync as readFileSync5 } from "node:fs";
-var KEYS = [
+var KEYS2 = [
   "session_id",
   "transcript_path",
   "cwd",
@@ -627,7 +738,7 @@ function parseHookInput(raw) {
   }
   if (!obj || typeof obj !== "object") return {};
   const out = {};
-  for (const k of KEYS) {
+  for (const k of KEYS2) {
     const v = obj[k];
     if (v !== void 0) out[k] = v;
   }
@@ -658,13 +769,65 @@ function countTranscriptLines(path) {
   return n;
 }
 
+// src/index-need.ts
+import { existsSync as existsSync5, readFileSync as readFileSync7 } from "node:fs";
+import { join as join5 } from "node:path";
+function stalePath() {
+  return join5(configDir(), "stale.log");
+}
+function staleEditsSince(path, key, since) {
+  if (!existsSync5(path)) return 0;
+  const sinceMs = since ? new Date(since).getTime() : -Infinity;
+  let n = 0;
+  for (const line of readFileSync7(path, "utf8").split("\n")) {
+    const m = /^\[([^\]]+)\] (\S+) \(/.exec(line);
+    if (!m || m[2] !== key) continue;
+    if (new Date(m[1]).getTime() > sinceMs) n++;
+  }
+  return n;
+}
+function decideIndexNeed(entry, key, path, autoIndex) {
+  if (!autoIndex) return { needed: false, reason: "auto_index_off", staleEdits: 0 };
+  const staleEdits = staleEditsSince(path, key, entry.lastIndexed);
+  if (entry.lastIndexed === null) return { needed: true, reason: "never_indexed", staleEdits };
+  if (staleEdits > 0) return { needed: true, reason: "stale", staleEdits };
+  return { needed: false, reason: "fresh", staleEdits: 0 };
+}
+
+// src/index-spawn.ts
+import { spawn } from "node:child_process";
+import { openSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname as dirname4, join as join6 } from "node:path";
+import { fileURLToPath } from "node:url";
+function runnerPath() {
+  const root = process.env["CLAUDE_PLUGIN_ROOT"];
+  if (root) return join6(root, "hooks", "index.js");
+  const here = fileURLToPath(import.meta.url);
+  return here.endsWith(".ts") ? join6(dirname4(here), "index-runner.ts") : join6(dirname4(here), "index.js");
+}
+function spawnIndexer(args) {
+  try {
+    const runner = args.runner ?? runnerPath();
+    const log = openSync(join6(configDir(), `index-${args.key}.log`), "a");
+    const argv = runner.endsWith(".ts") ? [createRequire(import.meta.url).resolve("tsx/cli"), runner] : [runner];
+    argv.push("--root", args.root, "--db", args.db, "--key", args.key);
+    if (args.stack.length) argv.push("--stack", args.stack.join(","));
+    const child = spawn(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
+    child.unref();
+    return child.pid ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // src/capture-log.ts
-import { appendFileSync, existsSync as existsSync5, mkdirSync as mkdirSync3 } from "node:fs";
-import { dirname as dirname3 } from "node:path";
+import { appendFileSync, existsSync as existsSync6, mkdirSync as mkdirSync4 } from "node:fs";
+import { dirname as dirname5 } from "node:path";
 function logCapture(event, fields = {}) {
   try {
     const path = captureLogPath();
-    if (!existsSync5(dirname3(path))) mkdirSync3(dirname3(path), { recursive: true });
+    if (!existsSync6(dirname5(path))) mkdirSync4(dirname5(path), { recursive: true });
     appendFileSync(path, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
   } catch {
   }
@@ -674,11 +837,26 @@ function logCapture(event, fields = {}) {
 async function main() {
   const input = readHookInput();
   const cwd = input.cwd ?? process.env["PWD"] ?? process.cwd();
-  const remote = safeGitRemote(cwd);
+  ensureEnvFile();
   const map = loadProjects(projectsJsonPath(), logError);
+  const cfg = resolveConfig();
+  const memoryDb = cfg.sources.memoryDb === "default" ? map.defaultMemoryDb : cfg.memoryDb;
+  const probe = await probeServer(toClientEnv(cfg));
+  if (probe.status !== "ok") {
+    logCapture("server_unavailable", { status: probe.status, httpUri: probe.httpUri, detail: probe.detail });
+    process.stdout.write(probeBanner(probe, cfg.username).join("\n") + "\n");
+    return;
+  }
+  const serverLine = probeBanner(probe, cfg.username)[0];
+  const client = new Client(toClientEnv(cfg));
+  try {
+    await applySchemas(client, memoryDb, ["core", "memory"]);
+  } catch (err) {
+    logError(err);
+    logCapture("memory_schema_failed", { db: memoryDb, error: err?.message ?? String(err) });
+  }
+  const remote = safeGitRemote(cwd);
   const match = findProject(map, cwd, remote);
-  const env = loadEnv();
-  const client = new Client(env);
   let project = match;
   let autoRegistered = false;
   const toplevel = match ? null : gitToplevel(cwd);
@@ -689,7 +867,7 @@ async function main() {
       if (stored) {
         project = { key: identity.key, entry: stored };
       } else {
-        if (identity.db === map.defaultMemoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
+        if (identity.db === memoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
         const entry = {
           db: identity.db,
           path: toplevel,
@@ -715,16 +893,26 @@ async function main() {
       project = null;
     }
   }
+  let indexing = false;
+  if (project && project.entry.path) {
+    const need = decideIndexNeed(project.entry, project.key, stalePath(), cfg.autoIndex);
+    if (need.needed) {
+      const pid = spawnIndexer({ root: project.entry.path, db: project.entry.db, key: project.key, stack: project.entry.stack });
+      indexing = pid !== null;
+      logCapture("index_spawned", { key: project.key, reason: need.reason, staleEdits: need.staleEdits, pid });
+    }
+  }
   let projectCtx = null;
   if (project) {
     projectCtx = await probeProject(client, project.entry.db, project.key, project.entry.lastIndexed);
     if (autoRegistered) projectCtx.autoRegistered = true;
+    if (indexing) projectCtx.indexing = true;
   }
-  const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
-  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"] }) + "\n");
+  const memoryCtx = await probeMemory(client, memoryDb);
+  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"], serverLine }) + "\n");
   if (project) {
     const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID2()}`;
-    await tryStartSession(client, map.defaultMemoryDb, project.key, cwd, claudeCodeSessionId, input.transcript_path).catch((err) => logError(err));
+    await tryStartSession(client, memoryDb, project.key, cwd, claudeCodeSessionId, input.transcript_path).catch((err) => logError(err));
   }
 }
 async function tryStartSession(client, memoryDb, repo, cwd, claudeCodeSessionId, transcriptPath) {
@@ -796,7 +984,7 @@ function safeGitRemote(cwd) {
 function logError(err) {
   try {
     const path = hookErrorLogPath();
-    if (!existsSync6(dirname4(path))) mkdirSync4(dirname4(path), { recursive: true });
+    if (!existsSync7(dirname6(path))) mkdirSync5(dirname6(path), { recursive: true });
     appendFileSync2(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] session-start: ${err?.message ?? String(err)}
 `);
   } catch {
