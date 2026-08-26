@@ -12,7 +12,7 @@ Walks the current project and writes its structure (`:Module`, `:File`, `:IMPORT
 
 1. Look up the current project in `~/.config/arcadedb/projects.json` (by CWD, basename, or git remote).
 2. If matched: shell out to `arcadedb-index $PWD --db <project-db> [extra-flags]`.
-3. If not matched: tell the user the project isn't registered. Suggest adding it to `~/.config/arcadedb/projects.json` first.
+3. If not matched: tell the user the project isn't registered. Tell them to start a Claude Code session in the repo root once so it auto-registers, then re-run this command.
 4. After indexing succeeds, suggest the user re-start the session so the new context is picked up by SessionStart hook.
 
 ## Args (passed through to arcadedb-index)

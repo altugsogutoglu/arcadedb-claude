@@ -485,7 +485,7 @@ function extractRemoteName(url) {
 }
 
 // src/auto-register.ts
-import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, writeFileSync } from "node:fs";
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, renameSync, writeFileSync } from "node:fs";
 import { basename as basename2, dirname, join as join3 } from "node:path";
 import { execSync } from "node:child_process";
 function deriveProjectIdentity(cwd, gitRemoteUrl) {
@@ -519,15 +519,29 @@ function fileMentionsExpo(path) {
     return false;
   }
 }
+var MEMORY_DB_COLLISION = "db_collides_with_memory_db";
+var RegistrationError = class extends Error {
+  constructor(reason) {
+    super(reason);
+    this.reason = reason;
+    this.name = "RegistrationError";
+  }
+  reason;
+};
 function registerProject(projectsPath, key, entry) {
   const map = loadProjects(projectsPath, (err) => {
     throw err;
   });
-  if (map.projects[key]) return;
+  const existing = map.projects[key];
+  if (existing) return { entry: existing, created: false };
+  if (entry.db === map.defaultMemoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
   map.projects[key] = entry;
   const dir = dirname(projectsPath);
   if (!existsSync3(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(projectsPath, JSON.stringify(map, null, 2) + "\n");
+  const tmp = `${projectsPath}.tmp`;
+  writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n");
+  renameSync(tmp, projectsPath);
+  return { entry, created: true };
 }
 function gitToplevel(cwd) {
   try {
@@ -671,21 +685,33 @@ async function main() {
   if (toplevel) {
     const identity = deriveProjectIdentity(toplevel, remote);
     try {
-      const entry = {
-        db: identity.db,
-        path: toplevel,
-        stack: detectStack(toplevel),
-        indexLevel: 0,
-        lastIndexed: null
-      };
-      await applySchemas(client, identity.db, ["core", "code"]);
-      registerProject(projectsJsonPath(), identity.key, entry);
-      logCapture("project_registered", { key: identity.key, db: identity.db, path: toplevel, cwd });
-      project = { key: identity.key, entry };
-      autoRegistered = true;
+      const stored = map.projects[identity.key];
+      if (stored) {
+        project = { key: identity.key, entry: stored };
+      } else {
+        if (identity.db === map.defaultMemoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
+        const entry = {
+          db: identity.db,
+          path: toplevel,
+          stack: detectStack(toplevel),
+          indexLevel: 0,
+          lastIndexed: null
+        };
+        await applySchemas(client, identity.db, ["core", "code"]);
+        const result = registerProject(projectsJsonPath(), identity.key, entry);
+        if (result.created) {
+          logCapture("project_registered", { key: identity.key, db: result.entry.db, path: toplevel, cwd });
+        }
+        project = { key: identity.key, entry: result.entry };
+        autoRegistered = result.created;
+      }
     } catch (err) {
       logError(err);
-      logCapture("project_register_failed", { key: identity.key, error: err?.message ?? String(err) });
+      logCapture("project_register_failed", {
+        key: identity.key,
+        reason: err instanceof RegistrationError ? err.reason : void 0,
+        error: err?.message ?? String(err)
+      });
       project = null;
     }
   }

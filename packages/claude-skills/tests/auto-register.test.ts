@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveProjectIdentity, detectStack, registerProject, gitToplevel } from "../src/auto-register.js";
+import {
+  deriveProjectIdentity,
+  detectStack,
+  registerProject,
+  gitToplevel,
+  RegistrationError,
+  MEMORY_DB_COLLISION,
+} from "../src/auto-register.js";
 import type { ProjectEntry } from "../src/project-map.js";
 
 let dir: string;
@@ -113,7 +120,7 @@ describe("detectStack", () => {
 describe("registerProject", () => {
   it("creates projects.json when it is missing", () => {
     const path = join(dir, "nested", "projects.json");
-    registerProject(path, "alpha", entry("alpha_db"));
+    expect(registerProject(path, "alpha", entry("alpha_db")).created).toBe(true);
     expect(existsSync(path)).toBe(true);
     const parsed = JSON.parse(readFileSync(path, "utf8"));
     expect(parsed.version).toBe(1);
@@ -143,17 +150,44 @@ describe("registerProject", () => {
     expect(parsed.defaultMemoryDb).toBe("mem_x");
   });
 
-  it("does not overwrite an existing key", () => {
+  it("returns the stored entry with created=false and leaves the file untouched", () => {
     const path = join(dir, "projects.json");
-    writeFileSync(path, JSON.stringify({
+    const original = JSON.stringify({
       version: 1,
       defaultMemoryDb: "claude_memory",
       projects: { alpha: entry("original_db") },
-    }, null, 2));
+    }, null, 2);
+    writeFileSync(path, original);
 
-    registerProject(path, "alpha", entry("new_db"));
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    expect(parsed.projects.alpha.db).toBe("original_db");
+    const result = registerProject(path, "alpha", entry("new_db"));
+    expect(result.created).toBe(false);
+    expect(result.entry.db).toBe("original_db");
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  it("refuses a db name that collides with the default memory db", () => {
+    const path = join(dir, "projects.json");
+    const original = JSON.stringify({
+      version: 1,
+      defaultMemoryDb: "claude_memory",
+      projects: {},
+    }, null, 2);
+    writeFileSync(path, original);
+
+    expect(() => registerProject(path, "claude-memory", entry("claude_memory")))
+      .toThrow(RegistrationError);
+    try {
+      registerProject(path, "claude-memory", entry("claude_memory"));
+    } catch (err) {
+      expect((err as RegistrationError).reason).toBe(MEMORY_DB_COLLISION);
+    }
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  it("leaves no .tmp file behind", () => {
+    const path = join(dir, "projects.json");
+    registerProject(path, "alpha", entry("alpha_db"));
+    expect(existsSync(`${path}.tmp`)).toBe(false);
   });
 });
 

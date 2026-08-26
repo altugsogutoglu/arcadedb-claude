@@ -86,7 +86,7 @@ describe("buildContext", () => {
   });
 });
 
-describe("buildContext — auto-registered project", () => {
+describe("buildContext - auto-registered project", () => {
   const base = {
     name: "auto-proj",
     db: "auto_proj",

@@ -50,9 +50,9 @@ Walk the user through every config step the plugin and CLIs need, asking only fo
 1. List databases via `GET /api/v1/databases`.
 2. If `claude_memory` is missing, run `arcadedb-memory migrate claude_memory` to create it and apply schemas. (Thanks to the 0.2.1 `ensureDatabase` fix, this is one shot.)
 
-### Step 4 — Offer to index the current project now
+### Step 4 — Indexing comes after the restart
 
-Ask the user whether to run `/graph-index --auto-migrate` immediately. If yes, do it. If no, tell them they can run it later; the project itself is registered on the next SessionStart either way.
+The project is not registered yet at this point, so `/graph-index` has nothing to look up. Tell the user to restart the session (Step 5): that SessionStart auto-registers the project, and `/graph-index` works from then on.
 
 ### Step 5 — Confirm and suggest restart
 

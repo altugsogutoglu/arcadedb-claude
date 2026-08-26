@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { Client, applySchemas, recordDecision, recordInsight } from "arcadedb-agent-memory";
 import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
+import { deriveProjectIdentity } from "../src/auto-register.js";
 
 const require = createRequire(import.meta.url);
 const tsxBin = require.resolve("tsx/cli");
@@ -241,7 +242,7 @@ async function dropDatabase(name: string): Promise<void> {
   }).catch(() => undefined);
 }
 
-describe("session-start hook — auto-registration", () => {
+describe("session-start hook - auto-registration", () => {
   const autoDbs = new Set<string>();
 
   afterAll(async () => {
@@ -323,6 +324,70 @@ describe("session-start hook — auto-registration", () => {
       expect(readFileSync(projectsPath, "utf8")).toBe(before);
     } finally {
       rmSync(plainDir, { recursive: true, force: true });
+    }
+  });
+  it("honours an existing registry entry instead of registering a second one", async () => {
+    // A repo whose toplevel basename is already a key in projects.json, reached from a
+    // subdirectory and with no git remote, so findProject cannot match it from here.
+    const repoDir = mkdtempSync(join(tmpdir(), "arcadedb-preseed-"));
+    execFileSync("git", ["init", "-q"], { cwd: repoDir, stdio: "ignore" });
+    const repoRoot = realpathSync(repoDir);
+    const subDir = join(repoDir, "sub");
+    mkdirSync(subDir, { recursive: true });
+
+    const identity = deriveProjectIdentity(repoRoot, null);
+    writeConfig({
+      [identity.key]: { db: projectDb.name, path: "/some/other/checkout", stack: [], indexLevel: 2, lastIndexed: null },
+    }, memoryDb.name);
+    const projectsPath = join(tmpHome, ".config", "arcadedb", "projects.json");
+    const before = readFileSync(projectsPath, "utf8");
+
+    try {
+      const { stdout, code } = await runWithStdin(
+        "src/session-start.ts",
+        JSON.stringify({ session_id: "preseed-sess-1", cwd: subDir, hook_event_name: "SessionStart", source: "startup" }),
+        { HOME: tmpHome, PWD: "/unrelated/dir" },
+      );
+      expect(code).toBe(0);
+      expect(stdout).toMatch(new RegExp(`Project: ${identity.key}`));
+      // The stored entry owns its DB, so the derived name is never used or created.
+      expect(stdout).toMatch(new RegExp(`DB: ${projectDb.name}`));
+      expect(stdout).not.toMatch(/auto-registered/);
+      expect(readFileSync(projectsPath, "utf8")).toBe(before);
+      expect(await client.listDatabases()).not.toContain(identity.db);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes nothing to projects.json when schema creation fails", async () => {
+    const dir = join(tmpHome, ".config", "arcadedb");
+    const projectsPath = join(dir, "projects.json");
+    writeFileSync(projectsPath, JSON.stringify({ version: 1, defaultMemoryDb: memoryDb.name, projects: {} }, null, 2));
+    // Point the hook at a port nothing listens on: applySchemas must fail before any write.
+    writeFileSync(join(dir, ".env"), [
+      "ARCADEDB_HTTP_URI=http://127.0.0.1:1",
+      `ARCADEDB_USERNAME=${env.username}`,
+      `ARCADEDB_ROOT_PASSWORD=${env.password}`,
+    ].join("\n") + "\n");
+    const before = readFileSync(projectsPath, "utf8");
+
+    const repoDir = mkdtempSync(join(tmpdir(), "arcadedb-failorder-"));
+    execFileSync("git", ["init", "-q"], { cwd: repoDir, stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:x/fail-order.git"], { cwd: repoDir, stdio: "ignore" });
+
+    try {
+      const { stdout, code } = await runWithStdin(
+        "src/session-start.ts",
+        JSON.stringify({ session_id: "failorder-sess-1", cwd: repoDir, hook_event_name: "SessionStart", source: "startup" }),
+        { HOME: tmpHome, PWD: "/unrelated/dir" },
+      );
+      expect(code).toBe(0);
+      expect(stdout).not.toMatch(/Project:/);
+      expect(readFileSync(projectsPath, "utf8")).toBe(before);
+      expect(existsSync(`${projectsPath}.tmp`)).toBe(false);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
     }
   });
 });

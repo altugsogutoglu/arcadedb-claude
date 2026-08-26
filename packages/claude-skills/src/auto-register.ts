@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { execSync } from "node:child_process";
 import { loadProjects, extractRemoteName, type ProjectEntry } from "./project-map.js";
@@ -49,14 +49,35 @@ function fileMentionsExpo(path: string): boolean {
   }
 }
 
-export function registerProject(projectsPath: string, key: string, entry: ProjectEntry): void {
+export const MEMORY_DB_COLLISION = "db_collides_with_memory_db";
+
+export class RegistrationError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "RegistrationError";
+  }
+}
+
+export interface RegisterResult {
+  /** The entry that now governs this key: the freshly written one, or the one already stored. */
+  entry: ProjectEntry;
+  created: boolean;
+}
+
+export function registerProject(projectsPath: string, key: string, entry: ProjectEntry): RegisterResult {
   // Refuse to rewrite a file we could not parse: overwriting it would drop the user's entries.
   const map = loadProjects(projectsPath, err => { throw err; });
-  if (map.projects[key]) return;
+  const existing = map.projects[key];
+  if (existing) return { entry: existing, created: false };
+  if (entry.db === map.defaultMemoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
+
   map.projects[key] = entry;
   const dir = dirname(projectsPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(projectsPath, JSON.stringify(map, null, 2) + "\n");
+  const tmp = `${projectsPath}.tmp`;
+  writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n");
+  renameSync(tmp, projectsPath);
+  return { entry, created: true };
 }
 
 export function gitToplevel(cwd: string): string | null {

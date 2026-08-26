@@ -16,12 +16,13 @@ entries; write new ADRs in `decisions/` to supersede past decisions.
 - Registration lived only in `/arcadedb-init` Step 2, a manual per-project flow.
 
 **Built:**
-- `src/auto-register.ts`: `deriveProjectIdentity` (git remote name, else cwd
+- `src/auto-register.ts`: `deriveProjectIdentity` (git remote name, else repo root
   basename; db name sanitized and `p_`-prefixed when it starts with a digit),
-  `detectStack` by marker files, `registerProject` (additive, never overwrites),
-  `isGitRepo`.
-- `session-start.ts` registers on a `findProject()` miss inside a git repo, applies
-  core+code schemas (creating the DB), then proceeds as a registered project. Banner
+  `detectStack` by marker files, `registerProject` (additive, never overwrites,
+  atomic), `gitToplevel`.
+- `session-start.ts` registers on a `findProject()` miss inside a git repo, keyed on
+  the repo root rather than the session cwd. Applies core+code schemas (creating the
+  DB) before writing the registry, then proceeds as a registered project. Banner
   says `auto-registered, not indexed yet, run /graph-index to index code`.
   Non-git dirs keep memory-only. Failures fall back to memory-only and log
   `project_register_failed`.

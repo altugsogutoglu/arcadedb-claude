@@ -13,7 +13,14 @@ import {
 } from "arcadedb-agent-memory";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { loadProjects, findProject, type FindResult, type ProjectEntry } from "./project-map.js";
-import { deriveProjectIdentity, detectStack, registerProject, gitToplevel } from "./auto-register.js";
+import {
+  deriveProjectIdentity,
+  detectStack,
+  registerProject,
+  gitToplevel,
+  RegistrationError,
+  MEMORY_DB_COLLISION,
+} from "./auto-register.js";
 import {
   buildContext,
   type ProjectContext,
@@ -41,22 +48,36 @@ async function main(): Promise<void> {
     // Register the repo root, not the subdirectory this session happens to start in.
     const identity = deriveProjectIdentity(toplevel, remote);
     try {
-      const entry: ProjectEntry = {
-        db: identity.db,
-        path: toplevel,
-        stack: detectStack(toplevel),
-        indexLevel: 0,
-        lastIndexed: null,
-      };
-      // Schemas first: a failure here must leave projects.json untouched.
-      await applySchemas(client, identity.db, ["core", "code"]);
-      registerProject(projectsJsonPath(), identity.key, entry);
-      logCapture("project_registered", { key: identity.key, db: identity.db, path: toplevel, cwd });
-      project = { key: identity.key, entry };
-      autoRegistered = true;
+      const stored = map.projects[identity.key];
+      if (stored) {
+        // The key is already registered under a path findProject could not match from here.
+        // The stored entry owns its DB: use it as-is, do not touch schemas or the registry.
+        project = { key: identity.key, entry: stored };
+      } else {
+        if (identity.db === map.defaultMemoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
+        const entry: ProjectEntry = {
+          db: identity.db,
+          path: toplevel,
+          stack: detectStack(toplevel),
+          indexLevel: 0,
+          lastIndexed: null,
+        };
+        // Schemas first: a failure here must leave projects.json untouched.
+        await applySchemas(client, identity.db, ["core", "code"]);
+        const result = registerProject(projectsJsonPath(), identity.key, entry);
+        if (result.created) {
+          logCapture("project_registered", { key: identity.key, db: result.entry.db, path: toplevel, cwd });
+        }
+        project = { key: identity.key, entry: result.entry };
+        autoRegistered = result.created;
+      }
     } catch (err) {
       logError(err);
-      logCapture("project_register_failed", { key: identity.key, error: (err as Error)?.message ?? String(err) });
+      logCapture("project_register_failed", {
+        key: identity.key,
+        reason: err instanceof RegistrationError ? err.reason : undefined,
+        error: (err as Error)?.message ?? String(err),
+      });
       project = null;
     }
   }
