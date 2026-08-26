@@ -5,12 +5,13 @@ import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   Client,
-  loadEnv,
   startSession,
   findLatestSessionForRepo,
   linkFollows,
   applySchemas,
 } from "arcadedb-agent-memory";
+import { ensureEnvFile, resolveConfig, toClientEnv } from "./config.js";
+import { probeServer, probeBanner } from "./server-probe.js";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { loadProjects, findProject, type FindResult, type ProjectEntry } from "./project-map.js";
 import {
@@ -34,12 +35,31 @@ import { logCapture } from "./capture-log.js";
 async function main(): Promise<void> {
   const input = readHookInput();
   const cwd = input.cwd ?? process.env["PWD"] ?? process.cwd();
-  const remote = safeGitRemote(cwd);
-  const map = loadProjects(projectsJsonPath(), logError);
-  const match = findProject(map, cwd, remote);
 
-  const env = loadEnv();
-  const client = new Client(env);
+  ensureEnvFile();
+  const map = loadProjects(projectsJsonPath(), logError);
+  const cfg = resolveConfig();
+  // projects.json's defaultMemoryDb stays authoritative unless ARCADEDB_MEMORY_DB is set explicitly.
+  const memoryDb = cfg.sources.memoryDb === "default" ? map.defaultMemoryDb : cfg.memoryDb;
+
+  const probe = await probeServer(toClientEnv(cfg));
+  if (probe.status !== "ok") {
+    logCapture("server_unavailable", { status: probe.status, httpUri: probe.httpUri, detail: probe.detail });
+    process.stdout.write(probeBanner(probe, cfg.username).join("\n") + "\n");
+    return;
+  }
+  const serverLine = probeBanner(probe, cfg.username)[0]!;
+
+  const client = new Client(toClientEnv(cfg));
+  try {
+    await applySchemas(client, memoryDb, ["core", "memory"]);
+  } catch (err) {
+    logError(err);
+    logCapture("memory_schema_failed", { db: memoryDb, error: (err as Error)?.message ?? String(err) });
+  }
+
+  const remote = safeGitRemote(cwd);
+  const match = findProject(map, cwd, remote);
 
   let project: FindResult | null = match;
   let autoRegistered = false;
@@ -54,7 +74,7 @@ async function main(): Promise<void> {
         // The stored entry owns its DB: use it as-is, do not touch schemas or the registry.
         project = { key: identity.key, entry: stored };
       } else {
-        if (identity.db === map.defaultMemoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
+        if (identity.db === memoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
         const entry: ProjectEntry = {
           db: identity.db,
           path: toplevel,
@@ -87,14 +107,14 @@ async function main(): Promise<void> {
     projectCtx = await probeProject(client, project.entry.db, project.key, project.entry.lastIndexed);
     if (autoRegistered) projectCtx.autoRegistered = true;
   }
-  const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
+  const memoryCtx = await probeMemory(client, memoryDb);
 
-  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"] }) + "\n");
+  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"], serverLine }) + "\n");
 
   // After context is printed, set up :Session lifecycle if we have a project.
   if (project) {
     const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID()}`;
-    await tryStartSession(client, map.defaultMemoryDb, project.key, cwd, claudeCodeSessionId, input.transcript_path).catch(err => logError(err));
+    await tryStartSession(client, memoryDb, project.key, cwd, claudeCodeSessionId, input.transcript_path).catch(err => logError(err));
   }
 }
 

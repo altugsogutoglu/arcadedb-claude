@@ -35,6 +35,22 @@ function runWithStdin(script: string, stdin: string, env: Record<string, string>
   });
 }
 
+function stripArcade(env: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("ARCADEDB_")) out[k] = v;
+  return { ...out, ...env };
+}
+function runCold(stdin: string, env: Record<string, string>): Promise<{ stdout: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [tsxBin, "src/session-start.ts"], { env: stripArcade(env), cwd: process.cwd() });
+    let stdout = "";
+    child.stdout.on("data", d => { stdout += d.toString(); });
+    child.on("close", code => resolve({ stdout, code: code ?? 0 }));
+    child.on("error", reject);
+    child.stdin.write(stdin); child.stdin.end();
+  });
+}
+
 let memoryDb: TempDb;
 let projectDb: TempDb;
 let tmpHome: string;
@@ -389,5 +405,52 @@ describe("session-start hook - auto-registration", () => {
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("session-start hook - bootstrap", () => {
+  it("cold HOME: creates .env with defaults and reports no_password when a server is reachable", async () => {
+    // Uses the real server URI from ~/.config/arcadedb/.env but a temp HOME with no .env at all.
+    rmSync(join(tmpHome, ".config", "arcadedb", ".env"), { force: true });
+    const realEnv = readFileSync(join(originalHome!, ".config", "arcadedb", ".env"), "utf8");
+    const uri = /ARCADEDB_HTTP_URI=(.*)/.exec(realEnv)?.[1]?.trim() ?? "http://localhost:2480";
+    const { stdout, code } = await runCold(
+      JSON.stringify({ session_id: "cold-1", cwd: "/nonexistent/dir", hook_event_name: "SessionStart" }),
+      { HOME: tmpHome, ARCADEDB_HTTP_URI: uri },
+    );
+    expect(code).toBe(0);
+    const envPath = join(tmpHome, ".config", "arcadedb", ".env");
+    expect(existsSync(envPath)).toBe(true);
+    expect(readFileSync(envPath, "utf8")).toContain("ARCADEDB_ROOT_PASSWORD=");
+    expect(stdout).toContain("but no password configured");
+    expect(stdout).toContain("Capture and code graph are off until then.");
+    expect(stdout).not.toContain("Memory DB:");
+    expect(existsSync(join(tmpHome, ".config", "arcadedb", "sessions", "cold-1.json"))).toBe(false);
+  });
+
+  it("unreachable server: exact banner, exit 0, no state", async () => {
+    writeFileSync(join(tmpHome, ".config", "arcadedb", ".env"), "ARCADEDB_HTTP_URI=http://127.0.0.1:1\nARCADEDB_ROOT_PASSWORD=x\n");
+    const { stdout, code } = await runCold(
+      JSON.stringify({ session_id: "down-1", cwd: "/nonexistent/dir" }),
+      { HOME: tmpHome },
+    );
+    expect(code).toBe(0);
+    expect(stdout.split("\n")[0]).toBe("ArcadeDB: server not reachable at http://127.0.0.1:1. Start ArcadeDB or run: /arcadedb-config set server http://host:port");
+    expect(existsSync(join(tmpHome, ".config", "arcadedb", "sessions", "down-1.json"))).toBe(false);
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"event":"server_unavailable"');
+  });
+
+  it("healthy server: prints Server line and creates the memory DB schemas when the memory DB is new", async () => {
+    const freshMem = `ss_boot_${Date.now()}`;
+    writeConfig({}, freshMem);
+    const { stdout } = await runWithStdin("src/session-start.ts", JSON.stringify({ session_id: "boot-1", cwd: "/random/dir" }), { HOME: tmpHome });
+    expect(stdout.split("\n")[1]).toMatch(/^  Server: http.*\(ok, \d+ ms\)$/);
+    expect(stdout).toContain(`Memory DB: ${freshMem} (0 decisions, 0 insights)`);
+    const dbs = await client.listDatabases();
+    expect(dbs).toContain(freshMem);
+    const types = await client.query<{ name: string }>(freshMem, "sql", "SELECT name FROM schema:types");
+    expect(types.map(t => t.name)).toContain("Decision");
+    await fetch(`${env.httpUri}/api/v1/server`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Basic " + Buffer.from(`${env.username}:${env.password}`).toString("base64") }, body: JSON.stringify({ command: `drop database ${freshMem}` }) });
   });
 });

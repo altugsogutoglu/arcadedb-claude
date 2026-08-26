@@ -18,10 +18,12 @@ export interface ContextInput {
   project: ProjectContext | null;
   memory: MemoryContext;
   extractorMode?: string;
+  serverLine?: string;
 }
 
 export function buildContext(input: ContextInput): string {
   const lines: string[] = ["ArcadeDB context loaded:"];
+  if (input.serverLine) lines.push(input.serverLine);
   if (input.project) {
     const p = input.project;
     if (p.autoRegistered && p.lastIndexed === null) {

@@ -113,3 +113,14 @@ describe("buildContext - auto-registered project", () => {
     expect(text).toMatch(/indexed: not indexed yet, 0 files, 0 imports/);
   });
 });
+
+describe("buildContext - server line", () => {
+  it("prints the server line right after the header when given", () => {
+    const out = buildContext({
+      project: null,
+      memory: { db: "claude_memory", decisionCount: 0, insightCount: 0 },
+      serverLine: "  Server: http://localhost:2480 (ok, 3 ms)",
+    });
+    expect(out.split("\n")[1]).toBe("  Server: http://localhost:2480 (ok, 3 ms)");
+  });
+});
