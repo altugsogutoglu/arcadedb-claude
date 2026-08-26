@@ -1,0 +1,865 @@
+#!/usr/bin/env node
+
+// bin/arcadedb-skills.ts
+import { readFileSync as readFileSync4, writeFileSync as writeFileSync2, mkdirSync as mkdirSync4, existsSync as existsSync6 } from "node:fs";
+import { dirname as dirname4 } from "node:path";
+
+// ../agent-memory/dist/src/errors.js
+var ArcadeDBConnectionError = class extends Error {
+  uri;
+  cause;
+  constructor(uri, cause) {
+    super(`Could not reach ArcadeDB at ${uri}. Is the container running? Try \`docker ps\`.`);
+    this.uri = uri;
+    this.cause = cause;
+    this.name = "ArcadeDBConnectionError";
+  }
+};
+var DatabaseNotFoundError = class extends Error {
+  database;
+  constructor(database) {
+    super(`Database "${database}" does not exist. Run \`arcadedb-memory migrate ${database}\` to create it.`);
+    this.database = database;
+    this.name = "DatabaseNotFoundError";
+  }
+};
+
+// ../agent-memory/dist/src/client.js
+var Client = class {
+  env;
+  constructor(env) {
+    this.env = env;
+  }
+  authHeader() {
+    return "Basic " + Buffer.from(`${this.env.username}:${this.env.password}`).toString("base64");
+  }
+  async post(path, body) {
+    let res;
+    try {
+      res = await fetch(`${this.env.httpUri}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: this.authHeader() },
+        body: JSON.stringify(body)
+      });
+    } catch (cause) {
+      throw new ArcadeDBConnectionError(this.env.httpUri, cause);
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      if (/database.*is not available|database.*not.*found|does not exist/i.test(text)) {
+        const m = text.match(/'([^']+)'/);
+        throw new DatabaseNotFoundError(m?.[1] ?? "unknown");
+      }
+      throw new Error(`ArcadeDB ${res.status} ${res.statusText}: ${text}`);
+    }
+    return await res.json();
+  }
+  async query(db, language, q) {
+    const data = await this.post(`/api/v1/query/${db}`, { language, command: q });
+    return data.result;
+  }
+  async execute(db, language, q) {
+    const data = await this.post(`/api/v1/command/${db}`, { language, command: q });
+    return data.result;
+  }
+  async command(serverCommand) {
+    return this.post(`/api/v1/server`, { command: serverCommand });
+  }
+  async listDatabases() {
+    let res;
+    try {
+      res = await fetch(`${this.env.httpUri}/api/v1/databases`, {
+        headers: { Authorization: this.authHeader() }
+      });
+    } catch (cause) {
+      throw new ArcadeDBConnectionError(this.env.httpUri, cause);
+    }
+    if (!res.ok)
+      throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
+    const data = await res.json();
+    return data.result;
+  }
+};
+
+// ../agent-memory/dist/src/env.js
+import { readFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+var DEFAULT_PATH = join(homedir(), ".config", "arcadedb", ".env");
+function loadEnv(path = DEFAULT_PATH) {
+  if (!existsSync(path)) {
+    throw new Error(`Env file not found at ${path}. Create it with ARCADEDB_ROOT_PASSWORD=<your-password>.`);
+  }
+  const raw = readFileSync(path, "utf8");
+  const map = {};
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#"))
+      continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1)
+      continue;
+    const key = trimmed.slice(0, eq).trim();
+    const value = trimmed.slice(eq + 1).trim();
+    map[key] = value;
+  }
+  const password = map["ARCADEDB_ROOT_PASSWORD"];
+  if (!password) {
+    throw new Error(`ARCADEDB_ROOT_PASSWORD missing in ${path}.`);
+  }
+  return {
+    password,
+    httpUri: map["ARCADEDB_HTTP_URI"] ?? "http://localhost:2480",
+    username: map["ARCADEDB_USERNAME"] ?? "root"
+  };
+}
+
+// ../agent-memory/dist/src/schemas/core.js
+var coreSchema = {
+  name: "core",
+  vertices: [
+    {
+      name: "Repo",
+      properties: [
+        { name: "name", type: "STRING", primaryKey: true, notNull: true },
+        { name: "path", type: "STRING" },
+        { name: "stack", type: "STRING" },
+        { name: "lastIndexedAt", type: "DATETIME" }
+      ]
+    },
+    {
+      name: "Person",
+      properties: [
+        { name: "name", type: "STRING", primaryKey: true, notNull: true },
+        { name: "email", type: "STRING" },
+        { name: "role", type: "STRING" }
+      ]
+    }
+  ],
+  edges: []
+};
+
+// ../agent-memory/dist/src/schemas/memory.js
+var memorySchema = {
+  name: "memory",
+  vertices: [
+    {
+      name: "Session",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "startedAt", type: "DATETIME", notNull: true },
+        { name: "endedAt", type: "DATETIME" },
+        { name: "repo", type: "STRING" },
+        { name: "summary", type: "STRING" }
+      ]
+    },
+    {
+      name: "Decision",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "summary", type: "STRING", notNull: true },
+        { name: "rationale", type: "STRING" },
+        { name: "decidedAt", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" }
+      ]
+    },
+    {
+      name: "Insight",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "topic", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "createdAt", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" }
+      ]
+    },
+    {
+      name: "Question",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "askedAt", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" }
+      ]
+    },
+    {
+      name: "Answer",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "answeredAt", type: "DATETIME", notNull: true },
+        { name: "confidence", type: "FLOAT" }
+      ]
+    }
+  ],
+  edges: [
+    { name: "ABOUT" },
+    { name: "DURING" },
+    { name: "FOLLOWS" },
+    { name: "ANSWERS" },
+    { name: "SUPERSEDES" },
+    { name: "DECIDED_ON" },
+    { name: "BLOCKED_BY" },
+    { name: "FIXED" },
+    { name: "RECOMMENDED_AGAINST" }
+  ]
+};
+
+// ../agent-memory/dist/src/schemas/code.js
+var codeSchema = {
+  name: "code",
+  vertices: [
+    {
+      name: "Module",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "path", type: "STRING", primaryKey: true, notNull: true },
+        { name: "language", type: "STRING" }
+      ]
+    },
+    {
+      name: "File",
+      properties: [
+        { name: "path", type: "STRING", primaryKey: true, notNull: true },
+        { name: "language", type: "STRING" },
+        { name: "loc", type: "INTEGER" },
+        { name: "hash", type: "STRING" },
+        { name: "modifiedAt", type: "DATETIME" }
+      ]
+    },
+    {
+      name: "Class",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "kind", type: "STRING" },
+        { name: "exported", type: "BOOLEAN" }
+      ]
+    },
+    {
+      name: "Function",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "signature", type: "STRING" },
+        { name: "async", type: "BOOLEAN" },
+        { name: "exported", type: "BOOLEAN" },
+        { name: "kind", type: "STRING" }
+      ]
+    },
+    {
+      name: "Route",
+      properties: [
+        { name: "path", type: "STRING", notNull: true },
+        { name: "method", type: "STRING" },
+        { name: "framework", type: "STRING" }
+      ]
+    },
+    {
+      name: "Component",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "path", type: "STRING" },
+        { name: "kind", type: "STRING" }
+      ]
+    }
+  ],
+  edges: [
+    { name: "CONTAINS" },
+    { name: "IMPORTS" },
+    { name: "CALLS" },
+    { name: "EXTENDS" },
+    { name: "IMPLEMENTS" },
+    { name: "HANDLES" },
+    { name: "RENDERS" }
+  ]
+};
+
+// ../agent-memory/dist/src/schemas/business.js
+var businessSchema = {
+  name: "business",
+  vertices: [
+    { name: "Store", properties: [{ name: "name", type: "STRING", primaryKey: true, notNull: true }] },
+    { name: "Product", properties: [
+      { name: "sku", type: "STRING", primaryKey: true, notNull: true },
+      { name: "name", type: "STRING" },
+      { name: "priceIncVat", type: "FLOAT" }
+    ] },
+    { name: "Category", properties: [{ name: "name", type: "STRING", primaryKey: true, notNull: true }] },
+    { name: "Order", properties: [
+      { name: "id", type: "STRING", primaryKey: true, notNull: true },
+      { name: "placedAt", type: "DATETIME" }
+    ] },
+    { name: "Customer", properties: [
+      { name: "id", type: "STRING", primaryKey: true, notNull: true },
+      { name: "email", type: "STRING" }
+    ] },
+    { name: "Concept", properties: [{ name: "name", type: "STRING", primaryKey: true, notNull: true }] }
+  ],
+  edges: [
+    { name: "SELLS" },
+    { name: "BELONGS_TO" },
+    { name: "PLACED" },
+    { name: "CONTAINS_PRODUCT" }
+  ]
+};
+
+// ../agent-memory/dist/src/schemas/notes.js
+var notesSchema = {
+  name: "notes",
+  vertices: [
+    {
+      name: "Note",
+      properties: [
+        { name: "path", type: "STRING", primaryKey: true, notNull: true },
+        { name: "title", type: "STRING" },
+        { name: "content", type: "STRING" },
+        { name: "vault", type: "STRING" },
+        { name: "createdAt", type: "DATETIME" },
+        { name: "modifiedAt", type: "DATETIME" }
+      ]
+    },
+    {
+      name: "Tag",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "vault", type: "STRING" }
+      ]
+    }
+  ],
+  edges: [
+    { name: "LINKS_TO" },
+    { name: "TAGGED" },
+    { name: "MENTIONS" }
+  ]
+};
+
+// ../agent-memory/dist/src/schemas/all.js
+var allSchemas = {
+  core: coreSchema,
+  memory: memorySchema,
+  code: codeSchema,
+  business: businessSchema,
+  notes: notesSchema
+};
+
+// ../agent-memory/dist/src/extractor/cypher-builder.js
+function quote(v) {
+  return '"' + String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+function propsClause(label, props, naturalKeys) {
+  const key = (naturalKeys[label] ?? [])[0];
+  if (!key)
+    throw new Error(`no natural key for label ${label}`);
+  return `{${key}:${quote(props[key])}}`;
+}
+function buildExtractorCypher(args) {
+  const { triple, sessionDbId, naturalKeys } = args;
+  const sub = propsClause(triple.subject.label, triple.subject.props, naturalKeys);
+  const obj = propsClause(triple.object.label, triple.object.props, naturalKeys);
+  const conf = triple.confidence != null ? `,
+                r.confidence = ${triple.confidence}` : "";
+  return `MERGE (s:${triple.subject.label} ${sub})
+  ON CREATE SET s.firstSeenAt = datetime()
+MERGE (o:${triple.object.label} ${obj})
+  ON CREATE SET o.firstSeenAt = datetime()
+MERGE (s)-[r:${triple.verb}]->(o)
+  ON CREATE SET r.firstAt = datetime(),
+                r.session = ${quote(sessionDbId)},
+                r.evidence = ${quote(triple.evidence)}${conf},
+                r.count = 1
+  ON MATCH  SET r.lastAt = datetime(),
+                r.count = coalesce(r.count, 1) + 1
+MERGE (sess:Session {id: ${quote(sessionDbId)}})
+MERGE (s)-[:DURING]->(sess)`;
+}
+
+// src/session-state.ts
+import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
+// src/env-paths.ts
+import { homedir as homedir2 } from "node:os";
+import { join as join2 } from "node:path";
+function configDir() {
+  return join2(homedir2(), ".config", "arcadedb");
+}
+function projectsJsonPath() {
+  return join2(configDir(), "projects.json");
+}
+function sessionsDir() {
+  return join2(configDir(), "sessions");
+}
+function sessionStatePath(claudeCodeSessionId) {
+  return join2(sessionsDir(), `${claudeCodeSessionId}.json`);
+}
+function dryrunPath(sessionDbId) {
+  return join2(configDir(), "dryrun", `${sessionDbId}.jsonl`);
+}
+function extractorErrorsPath(sessionDbId, timestamp) {
+  return join2(configDir(), "extractor-errors", `${sessionDbId}-${timestamp}.txt`);
+}
+function captureLogPath() {
+  return join2(configDir(), "capture.log");
+}
+
+// src/session-state.ts
+function readSessionState(claudeCodeSessionId) {
+  const path = sessionStatePath(claudeCodeSessionId);
+  if (!existsSync2(path)) return null;
+  try {
+    const raw = JSON.parse(readFileSync2(path, "utf8"));
+    return {
+      ...raw,
+      currentLine: raw.currentLine ?? 0,
+      lastExtractedLine: raw.lastExtractedLine ?? 0
+    };
+  } catch {
+    return null;
+  }
+}
+function writeSessionState(state) {
+  const path = sessionStatePath(state.claudeCodeSessionId);
+  const dir = dirname(path);
+  if (!existsSync2(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
+}
+function markExtracted(claudeCodeSessionId, turnIdx, lineIdx) {
+  const state = readSessionState(claudeCodeSessionId);
+  if (!state) return null;
+  state.lastExtractedTurnIdx = turnIdx;
+  if (lineIdx !== void 0) state.lastExtractedLine = lineIdx;
+  state.lastExtractedAt = (/* @__PURE__ */ new Date()).toISOString();
+  writeSessionState(state);
+  return state;
+}
+
+// src/extractor-validator.ts
+function validateExtraction(raw, vocab) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return { ok: false, reason: `JSON parse failure: ${e.message}` };
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return { ok: false, reason: "expected JSON object" };
+  }
+  const obj = parsed;
+  if (!Array.isArray(obj.triples)) {
+    return { ok: false, reason: "missing or invalid triples array" };
+  }
+  const labels = new Set(vocab.vertexLabels);
+  const edges = new Set(vocab.edgeNames);
+  const valid = [];
+  const invalid = [];
+  const pendingVocab = [];
+  for (const t of obj.triples) {
+    if (!t.evidence || typeof t.evidence !== "string") {
+      invalid.push({ triple: t, reason: "missing evidence" });
+      continue;
+    }
+    if (!labels.has(t.subject?.label) || !labels.has(t.object?.label) || !edges.has(t.verb)) {
+      pendingVocab.push(t);
+      continue;
+    }
+    const subKey = (vocab.naturalKeys[t.subject.label] ?? [])[0];
+    const objKey = (vocab.naturalKeys[t.object.label] ?? [])[0];
+    if (!subKey || t.subject.props?.[subKey] == null) {
+      invalid.push({ triple: t, reason: `missing natural key '${subKey}' on subject ${t.subject.label}` });
+      continue;
+    }
+    if (!objKey || t.object.props?.[objKey] == null) {
+      invalid.push({ triple: t, reason: `missing natural key '${objKey}' on object ${t.object.label}` });
+      continue;
+    }
+    valid.push(t);
+  }
+  return {
+    ok: true,
+    valid,
+    invalid,
+    pendingVocab,
+    unknownTerms: Array.isArray(obj.unknown_terms) ? obj.unknown_terms : []
+  };
+}
+
+// src/vocab-snapshot.ts
+var NATURAL_KEYS = {
+  Person: ["name"],
+  File: ["path"],
+  Function: ["name"],
+  Class: ["name"],
+  Component: ["name"],
+  Repo: ["name"],
+  Module: ["path"],
+  Concept: ["name"],
+  Tag: ["name"],
+  Session: ["id"],
+  Decision: ["id"],
+  Insight: ["id"],
+  Question: ["id"],
+  Answer: ["id"],
+  Note: ["id"]
+};
+function buildVocabSnapshot() {
+  const labels = /* @__PURE__ */ new Set();
+  const edges = /* @__PURE__ */ new Set();
+  for (const schema of Object.values(allSchemas)) {
+    for (const v of schema.vertices) labels.add(v.name);
+    for (const e of schema.edges) edges.add(e.name);
+  }
+  return {
+    vertexLabels: [...labels].sort(),
+    edgeNames: [...edges].sort(),
+    naturalKeys: { ...NATURAL_KEYS }
+  };
+}
+
+// src/dryrun-writer.ts
+import { appendFileSync, existsSync as existsSync3, mkdirSync as mkdirSync2 } from "node:fs";
+import { dirname as dirname2 } from "node:path";
+function writeDryrunBatch(args) {
+  const path = dryrunPath(args.sessionDbId);
+  if (!existsSync3(dirname2(path))) mkdirSync2(dirname2(path), { recursive: true });
+  const vocab = buildVocabSnapshot();
+  const lines = [];
+  lines.push(JSON.stringify({
+    kind: "batch",
+    ts: (/* @__PURE__ */ new Date()).toISOString(),
+    claudeCodeSessionId: args.claudeCodeSessionId,
+    turnRange: args.turnRange,
+    counts: {
+      valid: args.valid.length,
+      invalid: args.invalid.length,
+      pendingVocab: args.pendingVocab.length,
+      unknownTerms: args.unknownTerms.length
+    }
+  }));
+  for (const triple of args.valid) {
+    let cypher = "";
+    try {
+      cypher = buildExtractorCypher({
+        triple: { ...triple, evidence: triple.evidence ?? "" },
+        sessionDbId: args.sessionDbId,
+        naturalKeys: vocab.naturalKeys
+      });
+    } catch (e) {
+      cypher = `// cypher-build error: ${e.message}`;
+    }
+    lines.push(JSON.stringify({ kind: "triple", triple, cypher }));
+  }
+  for (const inv of args.invalid) {
+    lines.push(JSON.stringify({ kind: "invalid", triple: inv.triple, reason: inv.reason }));
+  }
+  for (const t of args.pendingVocab) {
+    lines.push(JSON.stringify({ kind: "pendingVocab", triple: t }));
+  }
+  for (const u of args.unknownTerms) {
+    lines.push(JSON.stringify({ kind: "unknownTerm", term: u }));
+  }
+  appendFileSync(path, lines.join("\n") + "\n");
+}
+
+// src/extract-write.ts
+async function executeLiveBatch(valid, deps) {
+  let written = 0;
+  let failed = 0;
+  const errors = [];
+  for (const triple of valid) {
+    try {
+      const cypher = buildExtractorCypher({
+        triple: { ...triple, evidence: triple.evidence ?? "" },
+        sessionDbId: deps.sessionDbId,
+        naturalKeys: deps.naturalKeys
+      });
+      await deps.execute(deps.memoryDb, cypher);
+      written += 1;
+    } catch (e) {
+      failed += 1;
+      errors.push(e.message);
+    }
+  }
+  return { written, failed, errors };
+}
+
+// src/project-map.ts
+import { readFileSync as readFileSync3, existsSync as existsSync4 } from "node:fs";
+var DEFAULT_MAP = {
+  version: 1,
+  defaultMemoryDb: "claude_memory",
+  projects: {}
+};
+function loadProjects(path, onError) {
+  if (!existsSync4(path)) return { ...DEFAULT_MAP, projects: {} };
+  const raw = readFileSync3(path, "utf8");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    onError?.(new Error(`projects.json at ${path} is malformed (${err.message}); falling back to empty project map.`));
+    return { ...DEFAULT_MAP, projects: {} };
+  }
+  if (!parsed.defaultMemoryDb) parsed.defaultMemoryDb = "claude_memory";
+  if (!parsed.projects) parsed.projects = {};
+  return parsed;
+}
+
+// src/extractor-prompt.ts
+function buildExtractorSystemPrompt(vocab) {
+  const labels = vocab.vertexLabels.join(", ");
+  const edges = vocab.edgeNames.join(", ");
+  const keys = Object.entries(vocab.naturalKeys).map(([label, ks]) => `  ${label}: ${ks.join(", ")}`).join("\n");
+  return `You are a knowledge graph extractor for Claude Code sessions.
+
+Read the supplied transcript slice and emit a JSON object containing structured triples that represent decisions, insights, questions, answers, blockers, fixes, and entity mentions.
+
+# Allowed vocabulary
+
+Vertex labels:
+${labels}
+
+Edge names (verbs):
+${edges}
+
+Natural keys (must be present in node props):
+${keys}
+
+# Output schema
+
+\`\`\`json
+{
+  "triples": [
+    {
+      "subject": { "label": "<vertex>", "props": { "<naturalKey>": "..." } },
+      "verb": "<edge>",
+      "object":  { "label": "<vertex>", "props": { "<naturalKey>": "..." } },
+      "evidence": "<verbatim quote, \u2264 200 chars>",
+      "confidence": 0.0-1.0
+    }
+  ],
+  "unknown_terms": [
+    { "candidate": "...", "kind": "noun"|"verb", "context": "...", "suggested_existing": "..." }
+  ],
+  "skipped": "<reason if no triples; omit otherwise>"
+}
+\`\`\`
+
+# Rules
+
+1. Use only labels and verbs from the lists above. If a meaningful concept doesn't fit, add it to \`unknown_terms\` \u2014 do NOT invent labels.
+2. Every triple needs an \`evidence\` quote, verbatim from the transcript, \u2264 200 chars.
+3. Be **conservative**. Prefer fewer high-quality triples over speculation. Pure mechanics (file edits with no discussion) emit none.
+4. "I", "the user", and "you" all refer to the same Person \u2014 emit \`{"label":"Person","props":{"name":"<userName from user prompt>"}}\`.
+5. For Decisions, Insights, Questions, Answers: generate a fresh UUID v4 string for \`id\`.
+
+# Few-shot examples
+
+## Example 1: a decision
+
+Transcript:
+> User: should we go with redis or postgres for the rate limiter?
+> Assistant: redis. it's already in the stack and the TTL semantics fit better.
+> User: ok, do that.
+
+Output:
+\`\`\`json
+{
+  "triples": [
+    {
+      "subject": {"label":"Decision","props":{"id":"c8e7...","summary":"use Redis for rate limiter"}},
+      "verb": "DECIDED_ON",
+      "object": {"label":"Concept","props":{"name":"Redis"}},
+      "evidence": "redis. it's already in the stack and the TTL semantics fit better.",
+      "confidence": 0.95
+    }
+  ]
+}
+\`\`\`
+
+## Example 2: a question + answer
+
+Transcript:
+> User: why doesn't the extractor capture conversations?
+> Assistant: v0 only does session bookkeeping; the v1 LLM extractor isn't built yet.
+
+Output:
+\`\`\`json
+{
+  "triples": [
+    {
+      "subject": {"label":"Question","props":{"id":"a1b2...","text":"why doesn't the extractor capture conversations?"}},
+      "verb": "ANSWERS",
+      "object": {"label":"Answer","props":{"id":"f3e4...","text":"v0 only does session bookkeeping; v1 LLM extractor isn't built yet","confidence":0.9}},
+      "evidence": "v0 only does session bookkeeping; the v1 LLM extractor isn't built yet.",
+      "confidence": 0.9
+    }
+  ]
+}
+\`\`\`
+
+## Example 3: a blocker with an unknown verb
+
+Transcript:
+> Assistant: I tried to run the indexer but the ArcadeDB endpoint times out from the hook context.
+
+Output:
+\`\`\`json
+{
+  "triples": [
+    {
+      "subject": {"label":"Concept","props":{"name":"indexer hook"}},
+      "verb": "BLOCKED_BY",
+      "object": {"label":"Concept","props":{"name":"ArcadeDB timeout"}},
+      "evidence": "the ArcadeDB endpoint times out from the hook context",
+      "confidence": 0.85
+    }
+  ],
+  "unknown_terms": [
+    { "candidate": "TIMES_OUT", "kind": "verb", "context": "endpoint times out from hook context", "suggested_existing": "BLOCKED_BY" }
+  ]
+}
+\`\`\`
+
+Return ONLY the JSON object. No prose, no markdown fences.`;
+}
+
+// src/capture-log.ts
+import { appendFileSync as appendFileSync2, existsSync as existsSync5, mkdirSync as mkdirSync3 } from "node:fs";
+import { dirname as dirname3 } from "node:path";
+function logCapture(event, fields = {}) {
+  try {
+    const path = captureLogPath();
+    if (!existsSync5(dirname3(path))) mkdirSync3(dirname3(path), { recursive: true });
+    appendFileSync2(path, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
+  } catch {
+  }
+}
+
+// bin/arcadedb-skills.ts
+function flag(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  return i === -1 ? void 0 : argv[i + 1];
+}
+function usage() {
+  console.error("usage: arcadedb-skills <command> [options]");
+  console.error("commands:");
+  console.error("  mark-extracted --session <id> --turn <n>   update session state after extractor finishes");
+  console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun>");
+}
+async function main() {
+  const [cmd, ...rest] = process.argv.slice(2);
+  if (!cmd) {
+    usage();
+    return 1;
+  }
+  if (cmd === "mark-extracted") {
+    const session = flag(rest, "session");
+    const turnArg = flag(rest, "turn");
+    const turn = Number(turnArg);
+    if (!session || turnArg === void 0 || !Number.isFinite(turn)) {
+      console.error("usage: arcadedb-skills mark-extracted --session <id> --turn <n>");
+      return 1;
+    }
+    const updated = markExtracted(session, turn);
+    if (updated) {
+      console.log(`marked turn ${turn} as extracted for session ${session}`);
+      return 0;
+    }
+    console.error(`no state file for session ${session}`);
+    return 1;
+  }
+  if (cmd === "extractor-prompt") {
+    process.stdout.write(buildExtractorSystemPrompt(buildVocabSnapshot()));
+    return 0;
+  }
+  if (cmd === "extract-write") {
+    const rawFile = flag(rest, "raw");
+    const sessionDbId = flag(rest, "session");
+    const ccSession = flag(rest, "cc-session");
+    const turns = flag(rest, "turns");
+    const mode = (flag(rest, "mode") ?? "live").toLowerCase();
+    if (!rawFile || !sessionDbId || !ccSession || !turns) {
+      console.error("usage: arcadedb-skills extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun>");
+      return 1;
+    }
+    const lines = flag(rest, "lines");
+    const turnArg = flag(rest, "turn");
+    const turn = turnArg === void 0 ? void 0 : Number(turnArg);
+    const lineEnd = lines ? Number(lines.split("..")[1]) : void 0;
+    const markIfRequested = () => {
+      if (turn !== void 0 && Number.isFinite(turn)) {
+        markExtracted(ccSession, turn, Number.isFinite(lineEnd) ? lineEnd : void 0);
+      }
+    };
+    const raw = readFileSync4(rawFile, "utf8");
+    const vocab = buildVocabSnapshot();
+    const result = validateExtraction(raw, vocab);
+    if (!result.ok) {
+      const path = extractorErrorsPath(sessionDbId, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"));
+      if (!existsSync6(dirname4(path))) mkdirSync4(dirname4(path), { recursive: true });
+      writeFileSync2(path, `validation failed: ${result.reason}
+
+${raw}`);
+      logCapture("validation_failed", { session: ccSession, sessionDbId, reason: result.reason });
+      markIfRequested();
+      console.log(JSON.stringify({ ok: false, reason: result.reason }));
+      return 0;
+    }
+    writeDryrunBatch({
+      sessionDbId,
+      claudeCodeSessionId: ccSession,
+      turnRange: turns,
+      valid: result.valid,
+      invalid: result.invalid,
+      pendingVocab: result.pendingVocab,
+      unknownTerms: result.unknownTerms
+    });
+    let live = { written: 0, failed: 0, errors: [] };
+    if (mode === "live") {
+      try {
+        const map = loadProjects(projectsJsonPath());
+        const client = new Client(loadEnv());
+        live = await executeLiveBatch(result.valid, {
+          execute: (db, cypher) => client.execute(db, "cypher", cypher),
+          memoryDb: map.defaultMemoryDb,
+          naturalKeys: vocab.naturalKeys,
+          sessionDbId
+        });
+      } catch (e) {
+        live = { written: 0, failed: result.valid.length, errors: [`live write unavailable: ${e.message}`] };
+      }
+    }
+    const summary = {
+      ok: true,
+      mode,
+      counts: {
+        valid: result.valid.length,
+        invalid: result.invalid.length,
+        pendingVocab: result.pendingVocab.length,
+        unknownTerms: result.unknownTerms.length,
+        written: live.written,
+        failed: live.failed
+      },
+      errors: live.errors
+    };
+    const liveFailed = mode === "live" && live.failed > 0;
+    if (liveFailed) {
+      logCapture("write_failed", { session: ccSession, sessionDbId, mode, lines, written: live.written, failed: live.failed, errors: live.errors });
+      console.error(`live write failed: ${live.failed} of ${result.valid.length} triples not written
+${live.errors.join("\n")}`);
+      console.log(JSON.stringify({ ...summary, ok: false }));
+      markIfRequested();
+      return 1;
+    }
+    markIfRequested();
+    logCapture("write", { session: ccSession, sessionDbId, mode, lines, written: live.written, failed: live.failed, invalid: result.invalid.length });
+    console.log(JSON.stringify(summary));
+    return 0;
+  }
+  console.error(`unknown command: ${cmd}`);
+  usage();
+  return 1;
+}
+main().then((c) => process.exit(c)).catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

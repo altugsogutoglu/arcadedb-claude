@@ -16,8 +16,10 @@ into the `claude_memory` graph.
 - `session_id`: Claude Code session id
 - `sessionDbId`: ArcadeDB Session UUID
 - `repo`, `userName`
-- `turns N..M`: 1-indexed turn range
+- `lines A..B`: 1-indexed line range of the transcript JSONL to read
+- `turn`: current turn index (pass through to extract-write)
 - `transcript_path`: absolute path to the JSONL transcript
+- `cli`: the command prefix for the bundled CLI, e.g. `node /path/to/plugin/hooks/cli.js`. Use it verbatim as `<cli>` below.
 - `mode`: `live` or `dryrun` (pass through to extract-write)
 
 ## Procedure
@@ -25,7 +27,7 @@ into the `claude_memory` graph.
 ### 1. Materialize the grammar
 
 ```bash
-node -e "import('arcadedb-claude-skills').then(m => process.stdout.write(m.buildExtractorSystemPrompt(m.buildVocabSnapshot())))"
+<cli> extractor-prompt
 ```
 
 Hold the printed prompt in mind: it lists every legal vertex label, edge name,
@@ -33,8 +35,14 @@ and natural key. Anything outside that list goes into `unknown_terms`.
 
 ### 2. Slice the transcript
 
-The transcript at `transcript_path` is JSONL, one entry per turn. Read only turns
-`N..M`. For long transcripts use `sed -n "<N>,<M>p"` rather than reading the whole file.
+The transcript at `transcript_path` is JSONL. Read only lines `A..B`:
+
+```bash
+sed -n "<A>,<B>p" <transcript_path>
+```
+
+Ignore entries whose `type` is not `user` or `assistant`. Skip tool-result noise;
+focus on what was discussed, decided, and learned.
 
 ### 3. Emit the JSON
 
@@ -53,26 +61,22 @@ key in `props` (e.g. Decision/Insight use `id`, Concept uses `name`, File uses
 ### 4. Validate + write (one command)
 
 ```bash
-npx arcadedb-skills extract-write \
+<cli> extract-write \
   --raw /tmp/arcadedb-extractor-<sessionDbId>.json \
   --session <sessionDbId> --cc-session <session_id> \
-  --turns <N>..<M> --mode <mode>
+  --turns <turn>..<turn> --lines <A>..<B> --turn <turn> --mode <mode>
 ```
 
-This validates, always appends the JSONL audit batch, and in `--mode live` writes
-the valid triples into `claude_memory`. It prints a JSON summary. On validation
-failure it writes to `~/.config/arcadedb/extractor-errors/` and still exits 0.
+This validates, always appends the JSONL audit batch, marks the range as
+extracted in session state, and in `--mode live` writes the valid triples into
+`claude_memory`. It prints a JSON summary. Exit code 1 means the live write
+failed: report that verbatim to the parent. On validation failure it writes to
+`~/.config/arcadedb/extractor-errors/` and exits 0.
 
-### 5. Mark the range extracted
+### 5. Report back (<150 words)
 
-```bash
-npx arcadedb-skills mark-extracted --session <session_id> --turn <M>
-```
-
-### 6. Report back (<150 words)
-
-Report the summary counts (written / failed / invalid / pendingVocab) and any
-unknown vocabulary candidates.
+Report the summary counts (written / failed / invalid / pendingVocab), the exit
+code, and any unknown vocabulary candidates.
 
 ## Rules
 

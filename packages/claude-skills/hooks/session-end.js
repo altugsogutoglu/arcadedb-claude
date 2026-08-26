@@ -170,15 +170,56 @@ function readSessionState(claudeCodeSessionId) {
   const path = sessionStatePath(claudeCodeSessionId);
   if (!existsSync3(path)) return null;
   try {
-    return JSON.parse(readFileSync3(path, "utf8"));
+    const raw = JSON.parse(readFileSync3(path, "utf8"));
+    return {
+      ...raw,
+      currentLine: raw.currentLine ?? 0,
+      lastExtractedLine: raw.lastExtractedLine ?? 0
+    };
   } catch {
     return null;
   }
 }
 
+// src/hook-input.ts
+import { readFileSync as readFileSync4 } from "node:fs";
+var KEYS = [
+  "session_id",
+  "transcript_path",
+  "cwd",
+  "hook_event_name",
+  "stop_hook_active",
+  "source",
+  "reason"
+];
+function parseHookInput(raw) {
+  if (!raw.trim()) return {};
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!obj || typeof obj !== "object") return {};
+  const out = {};
+  for (const k of KEYS) {
+    const v = obj[k];
+    if (v !== void 0) out[k] = v;
+  }
+  return out;
+}
+function readHookInput() {
+  try {
+    return parseHookInput(readFileSync4(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
 // src/session-end.ts
 async function main() {
-  const claudeCodeSessionId = process.env["CLAUDE_SESSION_ID"];
+  const input = readHookInput();
+  const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"];
   if (!claudeCodeSessionId) return;
   const state = readSessionState(claudeCodeSessionId);
   if (!state) return;

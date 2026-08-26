@@ -236,9 +236,45 @@ function writeSessionState(state) {
   writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
 }
 
+// src/hook-input.ts
+import { readFileSync as readFileSync4 } from "node:fs";
+var KEYS = [
+  "session_id",
+  "transcript_path",
+  "cwd",
+  "hook_event_name",
+  "stop_hook_active",
+  "source",
+  "reason"
+];
+function parseHookInput(raw) {
+  if (!raw.trim()) return {};
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!obj || typeof obj !== "object") return {};
+  const out = {};
+  for (const k of KEYS) {
+    const v = obj[k];
+    if (v !== void 0) out[k] = v;
+  }
+  return out;
+}
+function readHookInput() {
+  try {
+    return parseHookInput(readFileSync4(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
 // src/session-start.ts
 async function main() {
-  const cwd = process.env["PWD"] ?? process.cwd();
+  const input = readHookInput();
+  const cwd = input.cwd ?? process.env["PWD"] ?? process.cwd();
   const remote = safeGitRemote(cwd);
   const map = loadProjects(projectsJsonPath(), logError);
   const match = findProject(map, cwd, remote);
@@ -251,11 +287,11 @@ async function main() {
   const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
   process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"] }) + "\n");
   if (match) {
-    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd).catch((err) => logError(err));
+    const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID2()}`;
+    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd, claudeCodeSessionId).catch((err) => logError(err));
   }
 }
-async function tryStartSession(client, memoryDb, repo, cwd) {
-  const claudeCodeSessionId = process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID2()}`;
+async function tryStartSession(client, memoryDb, repo, cwd, claudeCodeSessionId) {
   const userName = resolveUserName(cwd);
   const previousSessionId = await findLatestSessionForRepo(client, memoryDb, repo);
   const newSessionId = await startSession(client, memoryDb, { repo });
@@ -269,7 +305,9 @@ async function tryStartSession(client, memoryDb, repo, cwd) {
     startedAt: now,
     currentTurnIdx: 0,
     lastExtractedTurnIdx: 0,
-    lastExtractedAt: now
+    lastExtractedAt: now,
+    currentLine: 0,
+    lastExtractedLine: 0
   });
   if (previousSessionId) {
     await linkFollows(client, memoryDb, newSessionId, previousSessionId);

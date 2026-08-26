@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -30,5 +30,9 @@ describe("hooks.json", () => {
     expect(Array.isArray(cfg.hooks?.Stop)).toBe(true);
     const cmd = cfg.hooks?.Stop?.[0]?.hooks?.find((h: { type: string; command?: string }) => h.type === "command");
     expect(cmd?.command).toMatch(/\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/stop\.js/);
+  });
+
+  it("ships a bundled cli at hooks/cli.js", () => {
+    expect(existsSync(join(__dirname, "..", "hooks", "cli.js"))).toBe(true);
   });
 });

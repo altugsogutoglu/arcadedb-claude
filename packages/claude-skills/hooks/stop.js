@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // src/stop.ts
-import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2 } from "node:fs";
-import { dirname as dirname2 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync3 } from "node:fs";
+import { dirname as dirname3 } from "node:path";
 
 // src/env-paths.ts
 import { homedir } from "node:os";
@@ -19,6 +19,9 @@ function sessionsDir() {
 function sessionStatePath(claudeCodeSessionId) {
   return join(sessionsDir(), `${claudeCodeSessionId}.json`);
 }
+function captureLogPath() {
+  return join(configDir(), "capture.log");
+}
 
 // src/session-state.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -27,7 +30,12 @@ function readSessionState(claudeCodeSessionId) {
   const path = sessionStatePath(claudeCodeSessionId);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    return {
+      ...raw,
+      currentLine: raw.currentLine ?? 0,
+      lastExtractedLine: raw.lastExtractedLine ?? 0
+    };
   } catch {
     return null;
   }
@@ -38,10 +46,11 @@ function writeSessionState(state) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
 }
-function incrementTurn(claudeCodeSessionId) {
+function incrementTurn(claudeCodeSessionId, currentLine) {
   const state = readSessionState(claudeCodeSessionId);
   if (!state) return null;
   state.currentTurnIdx += 1;
+  if (currentLine !== void 0) state.currentLine = currentLine;
   writeSessionState(state);
   return state;
 }
@@ -56,6 +65,70 @@ function shouldExtract(state, cfg, now) {
   return now.getTime() - last >= cfg.intervalMs;
 }
 
+// src/hook-input.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+var KEYS = [
+  "session_id",
+  "transcript_path",
+  "cwd",
+  "hook_event_name",
+  "stop_hook_active",
+  "source",
+  "reason"
+];
+function parseHookInput(raw) {
+  if (!raw.trim()) return {};
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!obj || typeof obj !== "object") return {};
+  const out = {};
+  for (const k of KEYS) {
+    const v = obj[k];
+    if (v !== void 0) out[k] = v;
+  }
+  return out;
+}
+function readHookInput() {
+  try {
+    return parseHookInput(readFileSync2(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+// src/capture-log.ts
+import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2 } from "node:fs";
+import { dirname as dirname2 } from "node:path";
+function logCapture(event, fields = {}) {
+  try {
+    const path = captureLogPath();
+    if (!existsSync2(dirname2(path))) mkdirSync2(dirname2(path), { recursive: true });
+    appendFileSync(path, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
+  } catch {
+  }
+}
+
+// src/transcript-lines.ts
+import { readFileSync as readFileSync3 } from "node:fs";
+function countTranscriptLines(path) {
+  if (!path) return 0;
+  let buf;
+  try {
+    buf = readFileSync3(path);
+  } catch {
+    return 0;
+  }
+  if (buf.length === 0) return 0;
+  let n = 0;
+  for (let i = 0; i < buf.length; i++) if (buf[i] === 10) n++;
+  if (buf[buf.length - 1] !== 10) n++;
+  return n;
+}
+
 // src/stop.ts
 function envInt(name, fallback) {
   const v = process.env[name];
@@ -67,51 +140,59 @@ var DEFAULT_TURNS = envInt("ARCADEDB_EXTRACT_TURNS", 10);
 var DEFAULT_INTERVAL_MS = envInt("ARCADEDB_EXTRACT_INTERVAL_MS", 15 * 60 * 1e3);
 async function main() {
   const mode = (process.env["ARCADEDB_EXTRACTOR"] ?? "live").toLowerCase();
-  if (mode === "off") return;
-  const dispatchMode = mode === "dryrun" ? "dryrun" : "live";
-  const raw = readStdin();
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch {
+  if (mode === "off") {
+    logCapture("skip", { reason: "off" });
     return;
   }
-  if (payload.stop_hook_active) return;
-  if (!payload.session_id) return;
-  const state = incrementTurn(payload.session_id);
-  if (!state) return;
+  const dispatchMode = mode === "dryrun" ? "dryrun" : "live";
+  const input = readHookInput();
+  if (input.stop_hook_active) {
+    logCapture("skip", { reason: "stop_hook_active", session: input.session_id });
+    return;
+  }
+  if (!input.session_id) {
+    logCapture("skip", { reason: "no_session_id" });
+    return;
+  }
+  const currentLine = countTranscriptLines(input.transcript_path);
+  const state = incrementTurn(input.session_id, currentLine);
+  if (!state) {
+    logCapture("skip", { reason: "no_state", session: input.session_id });
+    return;
+  }
   const tripped = shouldExtract(
     state,
     { turns: DEFAULT_TURNS, intervalMs: DEFAULT_INTERVAL_MS },
     /* @__PURE__ */ new Date()
   );
-  if (!tripped) return;
-  const turnRange = `${state.lastExtractedTurnIdx + 1}..${state.currentTurnIdx}`;
+  if (!tripped) {
+    logCapture("skip", { reason: "not_due", session: input.session_id, turn: state.currentTurnIdx, line: currentLine });
+    return;
+  }
+  const lines = `${state.lastExtractedLine + 1}..${state.currentLine}`;
+  const pluginRoot = process.env["CLAUDE_PLUGIN_ROOT"] ?? ".";
+  const cli = `node ${pluginRoot}/hooks/cli.js`;
+  logCapture("trigger", { session: input.session_id, sessionDbId: state.sessionDbId, lines, turn: state.currentTurnIdx });
   process.stdout.write(JSON.stringify({
     decision: "block",
     reason: `ARCADEDB extraction is due. You MUST now dispatch the extractor subagent (subagent_type=extractor) with these parameters, then continue normally:
-- session_id: ${payload.session_id}
+- session_id: ${input.session_id}
 - sessionDbId: ${state.sessionDbId}
 - repo: ${state.repo}
 - userName: ${state.userName}
-- turns: ${turnRange}
-- transcript_path: ${payload.transcript_path ?? "(unavailable)"}
-- mode: pass --mode ${dispatchMode} to extract-write
+- lines: ${lines}
+- turn: ${state.currentTurnIdx}
+- transcript_path: ${input.transcript_path ?? "(unavailable)"}
+- cli: ${cli}
+- mode: ${dispatchMode}
 Do not skip this. After the subagent reports back, resume the conversation.`
   }) + "\n");
-}
-function readStdin() {
-  try {
-    return readFileSync2(0, "utf8");
-  } catch {
-    return "";
-  }
 }
 function logError(err) {
   try {
     const path = hookErrorLogPath();
-    if (!existsSync2(dirname2(path))) mkdirSync2(dirname2(path), { recursive: true });
-    appendFileSync(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] stop: ${err?.message ?? String(err)}
+    if (!existsSync3(dirname3(path))) mkdirSync3(dirname3(path), { recursive: true });
+    appendFileSync2(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] stop: ${err?.message ?? String(err)}
 `);
   } catch {
   }

@@ -15,13 +15,22 @@ describe("extractor subagent manifest", () => {
     expect(manifest).toMatch(/tools:\s*Read,\s*Write,\s*Bash/);
   });
 
-  it("references the buildExtractorSystemPrompt helper from arcadedb-claude-skills", () => {
-    expect(manifest).toContain("buildExtractorSystemPrompt");
+  it("references the extractor-prompt CLI command to materialize the grammar", () => {
+    expect(manifest).toContain("extractor-prompt");
   });
 
   it("documents the extract-write call and live mode", () => {
     expect(manifest).toContain("extract-write");
     expect(manifest).toContain("--mode");
-    expect(manifest).toContain("mark-extracted");
+  });
+
+  it("uses the dispatched cli path and line range, not npx", () => {
+    expect(manifest).toContain("<cli> extract-write");
+    expect(manifest).toContain("<cli> extractor-prompt");
+    expect(manifest).toContain("--lines <A>..<B>");
+    expect(manifest).toContain("--turn <turn>");
+    expect(manifest).not.toContain("npx arcadedb-skills");
+    expect(manifest).not.toContain("mark-extracted");
+    expect(manifest).not.toContain("import('arcadedb-claude-skills')");
   });
 });

@@ -13,4 +13,10 @@ describe("package barrel", () => {
     expect(typeof out).toBe("string");
     expect(out.length).toBeGreaterThan(0);
   });
+
+  it("exposes the hook helpers used by hooks/cli.js consumers", () => {
+    expect(typeof api.parseHookInput).toBe("function");
+    expect(typeof api.logCapture).toBe("function");
+    expect(typeof api.countTranscriptLines).toBe("function");
+  });
 });
