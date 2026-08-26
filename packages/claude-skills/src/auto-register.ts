@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { execSync } from "node:child_process";
-import { loadProjects, extractRemoteName, type ProjectEntry } from "./project-map.js";
+import { loadProjects, extractRemoteName, type ProjectEntry, type ProjectsMap } from "./project-map.js";
 
 export interface ProjectIdentity {
   key: string;
@@ -64,6 +64,14 @@ export interface RegisterResult {
   created: boolean;
 }
 
+export function writeProjectsFile(projectsPath: string, map: ProjectsMap): void {
+  const dir = dirname(projectsPath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const tmp = `${projectsPath}.tmp`;
+  writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n");
+  renameSync(tmp, projectsPath);
+}
+
 export function registerProject(projectsPath: string, key: string, entry: ProjectEntry): RegisterResult {
   // Refuse to rewrite a file we could not parse: overwriting it would drop the user's entries.
   const map = loadProjects(projectsPath, err => { throw err; });
@@ -72,12 +80,18 @@ export function registerProject(projectsPath: string, key: string, entry: Projec
   if (entry.db === map.defaultMemoryDb) throw new RegistrationError(MEMORY_DB_COLLISION);
 
   map.projects[key] = entry;
-  const dir = dirname(projectsPath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmp = `${projectsPath}.tmp`;
-  writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n");
-  renameSync(tmp, projectsPath);
+  writeProjectsFile(projectsPath, map);
   return { entry, created: true };
+}
+
+export function updateProject(projectsPath: string, key: string, patch: Partial<ProjectEntry>): ProjectEntry | null {
+  const map = loadProjects(projectsPath, err => { throw err; });
+  const current = map.projects[key];
+  if (!current) return null;
+  const next = { ...current, ...patch };
+  map.projects[key] = next;
+  writeProjectsFile(projectsPath, map);
+  return next;
 }
 
 export function gitToplevel(cwd: string): string | null {

@@ -7,6 +7,7 @@ import {
   deriveProjectIdentity,
   detectStack,
   registerProject,
+  updateProject,
   gitToplevel,
   RegistrationError,
   MEMORY_DB_COLLISION,
@@ -187,6 +188,18 @@ describe("registerProject", () => {
   it("leaves no .tmp file behind", () => {
     const path = join(dir, "projects.json");
     registerProject(path, "alpha", entry("alpha_db"));
+    expect(existsSync(`${path}.tmp`)).toBe(false);
+  });
+});
+
+describe("updateProject", () => {
+  it("patches one entry atomically and returns it; null when missing", () => {
+    const path = join(dir, "projects.json");
+    registerProject(path, "a", entry("a"));
+    const out = updateProject(path, "a", { lastIndexed: "2026-08-27T00:00:00.000Z", indexLevel: 2 });
+    expect(out?.lastIndexed).toBe("2026-08-27T00:00:00.000Z");
+    expect(JSON.parse(readFileSync(path, "utf8")).projects.a.indexLevel).toBe(2);
+    expect(updateProject(path, "zzz", { indexLevel: 1 })).toBeNull();
     expect(existsSync(`${path}.tmp`)).toBe(false);
   });
 });
