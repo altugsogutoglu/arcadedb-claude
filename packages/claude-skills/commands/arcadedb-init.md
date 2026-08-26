@@ -1,12 +1,12 @@
 ---
-description: "First-run setup: writes ~/.config/arcadedb/.env, verifies the server, registers the current project in projects.json. Idempotent."
+description: "First-run setup: writes ~/.config/arcadedb/.env, verifies the server, creates projects.json and the claude_memory database. Projects register themselves on SessionStart. Idempotent."
 argument-hint: ""
 allowed-tools: Bash, Read, Write, Edit, AskUserQuestion
 ---
 
 # /arcadedb-init
 
-One-shot bootstrap for the arcadedb-claude suite. Run this once after `docker run arcadedata/arcadedb` and after installing the plugin. Idempotent: safe to re-run later to add another project.
+One-shot bootstrap for the arcadedb-claude suite. Run this once after `docker run arcadedata/arcadedb` and after installing the plugin. Idempotent: safe to re-run at any time.
 
 ## Behavior
 
@@ -43,16 +43,7 @@ Walk the user through every config step the plugin and CLIs need, asking only fo
      "projects": {}
    }
    ```
-2. Determine the current project's identity:
-   - **name**: `basename "$PWD"`
-   - **path**: `$PWD`
-   - **db**: name with non-alphanumerics replaced by `_` (e.g. `transprt.net` → `transprt_net`)
-3. If the project is already in `projects.json` (by path match), report it and skip to step 3.
-4. Otherwise use `AskUserQuestion` to confirm or override:
-   - Project key (default: basename)
-   - DB name (default: sanitized basename)
-   - Stack — multi-select: `nextjs`, `laravel`, `expo`, `typescript`, `php`, `python`, `other`
-5. Add the entry to `projects.json` and write it back. Preserve other projects.
+2. Do not add a project entry here. Projects register themselves automatically on the first SessionStart inside a git repo; `/graph-index` indexes code when you want it.
 
 ### Step 3 — Initialize `claude_memory` if it doesn't exist
 
@@ -61,7 +52,7 @@ Walk the user through every config step the plugin and CLIs need, asking only fo
 
 ### Step 4 — Offer to index the current project now
 
-Ask the user whether to run `/graph-index --auto-migrate --stack <chosen-stack>` immediately. If yes, do it. If no, tell them they can run it later.
+Ask the user whether to run `/graph-index --auto-migrate` immediately. If yes, do it. If no, tell them they can run it later; the project itself is registered on the next SessionStart either way.
 
 ### Step 5 — Confirm and suggest restart
 
@@ -70,15 +61,15 @@ Print a summary:
 ArcadeDB ready.
   Server:     http://localhost:2480
   Memory DB:  claude_memory (ready)
-  Project:    <name> -> <db> (indexed: <yes/no>)
+  Project:    registered automatically on next session start
 
 Restart this Claude Code session to trigger the SessionStart hook with the new config.
 ```
 
 ## Idempotency
 
-- Re-running on a fully-configured project is a no-op that prints the current state.
-- Re-running in a new project directory only adds that project's entry to `projects.json`; it does not touch existing entries or `.env`.
+- Re-running on a fully-configured machine is a no-op that prints the current state.
+- Never rewrites `.env` or existing `projects.json` entries.
 
 ## Prerequisites
 

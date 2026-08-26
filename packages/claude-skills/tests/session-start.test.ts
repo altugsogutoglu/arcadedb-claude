@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
@@ -227,5 +227,95 @@ describe("session-start hook — :Session lifecycle", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     expect(state.currentLine).toBe(7);
     expect(state.lastExtractedLine).toBe(7);
+  });
+});
+
+async function dropDatabase(name: string): Promise<void> {
+  await fetch(`${env.httpUri}/api/v1/server`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Basic " + Buffer.from(`${env.username}:${env.password}`).toString("base64"),
+    },
+    body: JSON.stringify({ command: `drop database ${name}` }),
+  }).catch(() => undefined);
+}
+
+describe("session-start hook — auto-registration", () => {
+  const autoDbs = new Set<string>();
+
+  afterAll(async () => {
+    for (const name of autoDbs) await dropDatabase(name);
+  });
+
+  it("registers an unregistered git repo, creates its DB, and starts a session", async () => {
+    writeConfig({}, memoryDb.name);
+    const projectsPath = join(tmpHome, ".config", "arcadedb", "projects.json");
+
+    const repoDir = mkdtempSync(join(tmpdir(), "arcadedb-autoproj-"));
+    execFileSync("git", ["init", "-q"], { cwd: repoDir, stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:x/auto-proj.git"], { cwd: repoDir, stdio: "ignore" });
+    autoDbs.add("auto_proj");
+
+    try {
+      const first = await runWithStdin(
+        "src/session-start.ts",
+        JSON.stringify({ session_id: "auto-sess-1", cwd: repoDir, hook_event_name: "SessionStart", source: "startup" }),
+        { HOME: tmpHome, PWD: "/unrelated/dir" },
+      );
+      expect(first.code).toBe(0);
+      expect(first.stdout).toMatch(/Project: auto-proj/);
+      expect(first.stdout).toMatch(/auto-registered/);
+      expect(first.stdout).toMatch(/run \/graph-index to index code/);
+
+      const parsed = JSON.parse(readFileSync(projectsPath, "utf8"));
+      expect(parsed.projects["auto-proj"].db).toBe("auto_proj");
+      expect(parsed.projects["auto-proj"].path).toBe(repoDir);
+      expect(parsed.projects["auto-proj"].indexLevel).toBe(0);
+      expect(parsed.projects["auto-proj"].lastIndexed).toBe(null);
+      expect(parsed.defaultMemoryDb).toBe(memoryDb.name);
+
+      const statePath = join(tmpHome, ".config", "arcadedb", "sessions", "auto-sess-1.json");
+      expect(existsSync(statePath)).toBe(true);
+      expect(JSON.parse(readFileSync(statePath, "utf8")).repo).toBe("auto-proj");
+
+      expect(await client.listDatabases()).toContain("auto_proj");
+
+      // Second run in the same cwd: no re-registration, no auto-registered wording.
+      const before = readFileSync(projectsPath, "utf8");
+      const second = await runWithStdin(
+        "src/session-start.ts",
+        JSON.stringify({ session_id: "auto-sess-2", cwd: repoDir, hook_event_name: "SessionStart", source: "startup" }),
+        { HOME: tmpHome, PWD: "/unrelated/dir" },
+      );
+      expect(second.code).toBe(0);
+      expect(readFileSync(projectsPath, "utf8")).toBe(before);
+      expect(second.stdout).toMatch(/Project: auto-proj/);
+      expect(second.stdout).not.toMatch(/auto-registered/);
+      expect(second.stdout).toMatch(/not indexed yet/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not register a non-git directory", async () => {
+    writeConfig({}, memoryDb.name);
+    const projectsPath = join(tmpHome, ".config", "arcadedb", "projects.json");
+    const before = readFileSync(projectsPath, "utf8");
+
+    const plainDir = mkdtempSync(join(tmpdir(), "arcadedb-plaindir-"));
+    try {
+      const { stdout, code } = await runWithStdin(
+        "src/session-start.ts",
+        JSON.stringify({ session_id: "auto-sess-3", cwd: plainDir, hook_event_name: "SessionStart", source: "startup" }),
+        { HOME: tmpHome, PWD: "/unrelated/dir" },
+      );
+      expect(code).toBe(0);
+      expect(stdout).not.toMatch(/Project:/);
+      expect(stdout).toMatch(/Memory DB:/);
+      expect(readFileSync(projectsPath, "utf8")).toBe(before);
+    } finally {
+      rmSync(plainDir, { recursive: true, force: true });
+    }
   });
 });

@@ -5,6 +5,7 @@ export interface ProjectContext {
   fileCount: number;
   importCount: number;
   types: string[];
+  autoRegistered?: boolean;
 }
 
 export interface MemoryContext {
@@ -23,10 +24,16 @@ export function buildContext(input: ContextInput): string {
   const lines: string[] = ["ArcadeDB context loaded:"];
   if (input.project) {
     const p = input.project;
-    const indexed = p.lastIndexed ?? "not indexed yet";
-    lines.push(
-      `  Project: ${p.name} (DB: ${p.db}, indexed: ${indexed}, ${p.fileCount} files, ${p.importCount} imports)`
-    );
+    if (p.autoRegistered && p.lastIndexed === null) {
+      lines.push(
+        `  Project: ${p.name} (DB: ${p.db}, auto-registered, not indexed yet, run /graph-index to index code)`
+      );
+    } else {
+      const indexed = p.lastIndexed ?? "not indexed yet";
+      lines.push(
+        `  Project: ${p.name} (DB: ${p.db}, indexed: ${indexed}, ${p.fileCount} files, ${p.importCount} imports)`
+      );
+    }
     if (p.types.length > 0) {
       lines.push(`  Schema: ${p.types.join(", ")}`);
     }

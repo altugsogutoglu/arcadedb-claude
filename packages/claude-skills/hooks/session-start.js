@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // src/session-start.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync5, mkdirSync as mkdirSync3 } from "node:fs";
-import { dirname as dirname3 } from "node:path";
-import { execSync } from "node:child_process";
+import { appendFileSync as appendFileSync2, existsSync as existsSync6, mkdirSync as mkdirSync4 } from "node:fs";
+import { dirname as dirname4 } from "node:path";
+import { execSync as execSync2 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 
 // ../agent-memory/dist/src/errors.js
@@ -116,6 +116,285 @@ function loadEnv(path = DEFAULT_PATH) {
   };
 }
 
+// ../agent-memory/dist/src/schemas/core.js
+var coreSchema = {
+  name: "core",
+  vertices: [
+    {
+      name: "Repo",
+      properties: [
+        { name: "name", type: "STRING", primaryKey: true, notNull: true },
+        { name: "path", type: "STRING" },
+        { name: "stack", type: "STRING" },
+        { name: "lastIndexedAt", type: "DATETIME" }
+      ]
+    },
+    {
+      name: "Person",
+      properties: [
+        { name: "name", type: "STRING", primaryKey: true, notNull: true },
+        { name: "email", type: "STRING" },
+        { name: "role", type: "STRING" }
+      ]
+    }
+  ],
+  edges: []
+};
+
+// ../agent-memory/dist/src/schemas/memory.js
+var memorySchema = {
+  name: "memory",
+  vertices: [
+    {
+      name: "Session",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "startedAt", type: "DATETIME", notNull: true },
+        { name: "endedAt", type: "DATETIME" },
+        { name: "repo", type: "STRING" },
+        { name: "summary", type: "STRING" }
+      ]
+    },
+    {
+      name: "Decision",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "summary", type: "STRING", notNull: true },
+        { name: "rationale", type: "STRING" },
+        { name: "decidedAt", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" }
+      ]
+    },
+    {
+      name: "Insight",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "topic", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "createdAt", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" }
+      ]
+    },
+    {
+      name: "Question",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "askedAt", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" }
+      ]
+    },
+    {
+      name: "Answer",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "answeredAt", type: "DATETIME", notNull: true },
+        { name: "confidence", type: "FLOAT" }
+      ]
+    }
+  ],
+  edges: [
+    { name: "ABOUT" },
+    { name: "DURING" },
+    { name: "FOLLOWS" },
+    { name: "ANSWERS" },
+    { name: "SUPERSEDES" },
+    { name: "DECIDED_ON" },
+    { name: "BLOCKED_BY" },
+    { name: "FIXED" },
+    { name: "RECOMMENDED_AGAINST" }
+  ]
+};
+
+// ../agent-memory/dist/src/schemas/code.js
+var codeSchema = {
+  name: "code",
+  vertices: [
+    {
+      name: "Module",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "path", type: "STRING", primaryKey: true, notNull: true },
+        { name: "language", type: "STRING" }
+      ]
+    },
+    {
+      name: "File",
+      properties: [
+        { name: "path", type: "STRING", primaryKey: true, notNull: true },
+        { name: "language", type: "STRING" },
+        { name: "loc", type: "INTEGER" },
+        { name: "hash", type: "STRING" },
+        { name: "modifiedAt", type: "DATETIME" }
+      ]
+    },
+    {
+      name: "Class",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "kind", type: "STRING" },
+        { name: "exported", type: "BOOLEAN" }
+      ]
+    },
+    {
+      name: "Function",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "signature", type: "STRING" },
+        { name: "async", type: "BOOLEAN" },
+        { name: "exported", type: "BOOLEAN" },
+        { name: "kind", type: "STRING" }
+      ]
+    },
+    {
+      name: "Route",
+      properties: [
+        { name: "path", type: "STRING", notNull: true },
+        { name: "method", type: "STRING" },
+        { name: "framework", type: "STRING" }
+      ]
+    },
+    {
+      name: "Component",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "path", type: "STRING" },
+        { name: "kind", type: "STRING" }
+      ]
+    }
+  ],
+  edges: [
+    { name: "CONTAINS" },
+    { name: "IMPORTS" },
+    { name: "CALLS" },
+    { name: "EXTENDS" },
+    { name: "IMPLEMENTS" },
+    { name: "HANDLES" },
+    { name: "RENDERS" }
+  ]
+};
+
+// ../agent-memory/dist/src/schemas/business.js
+var businessSchema = {
+  name: "business",
+  vertices: [
+    { name: "Store", properties: [{ name: "name", type: "STRING", primaryKey: true, notNull: true }] },
+    { name: "Product", properties: [
+      { name: "sku", type: "STRING", primaryKey: true, notNull: true },
+      { name: "name", type: "STRING" },
+      { name: "priceIncVat", type: "FLOAT" }
+    ] },
+    { name: "Category", properties: [{ name: "name", type: "STRING", primaryKey: true, notNull: true }] },
+    { name: "Order", properties: [
+      { name: "id", type: "STRING", primaryKey: true, notNull: true },
+      { name: "placedAt", type: "DATETIME" }
+    ] },
+    { name: "Customer", properties: [
+      { name: "id", type: "STRING", primaryKey: true, notNull: true },
+      { name: "email", type: "STRING" }
+    ] },
+    { name: "Concept", properties: [{ name: "name", type: "STRING", primaryKey: true, notNull: true }] }
+  ],
+  edges: [
+    { name: "SELLS" },
+    { name: "BELONGS_TO" },
+    { name: "PLACED" },
+    { name: "CONTAINS_PRODUCT" }
+  ]
+};
+
+// ../agent-memory/dist/src/schemas/notes.js
+var notesSchema = {
+  name: "notes",
+  vertices: [
+    {
+      name: "Note",
+      properties: [
+        { name: "path", type: "STRING", primaryKey: true, notNull: true },
+        { name: "title", type: "STRING" },
+        { name: "content", type: "STRING" },
+        { name: "vault", type: "STRING" },
+        { name: "createdAt", type: "DATETIME" },
+        { name: "modifiedAt", type: "DATETIME" }
+      ]
+    },
+    {
+      name: "Tag",
+      properties: [
+        { name: "name", type: "STRING", notNull: true },
+        { name: "vault", type: "STRING" }
+      ]
+    }
+  ],
+  edges: [
+    { name: "LINKS_TO" },
+    { name: "TAGGED" },
+    { name: "MENTIONS" }
+  ]
+};
+
+// ../agent-memory/dist/src/schemas/all.js
+var allSchemas = {
+  core: coreSchema,
+  memory: memorySchema,
+  code: codeSchema,
+  business: businessSchema,
+  notes: notesSchema
+};
+
+// ../agent-memory/dist/src/migrations/render.js
+function renderSchema(s) {
+  const out = [];
+  for (const v of s.vertices)
+    out.push(...renderVertex(v));
+  for (const e of s.edges)
+    out.push(...renderEdge(e));
+  return out;
+}
+function renderVertex(v) {
+  const stmts = [`CREATE VERTEX TYPE ${v.name} IF NOT EXISTS`];
+  for (const p of v.properties ?? []) {
+    stmts.push(...renderProperty(v.name, p));
+  }
+  return stmts;
+}
+function renderEdge(e) {
+  const stmts = [`CREATE EDGE TYPE ${e.name} IF NOT EXISTS`];
+  for (const p of e.properties ?? []) {
+    stmts.push(...renderProperty(e.name, p));
+  }
+  return stmts;
+}
+function renderProperty(typeName, p) {
+  const stmts = [`CREATE PROPERTY ${typeName}.${p.name} IF NOT EXISTS ${p.type}`];
+  if (p.primaryKey) {
+    stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) UNIQUE`);
+  }
+  return stmts;
+}
+
+// ../agent-memory/dist/src/migrations/apply.js
+async function applySchemas(client, database, domains) {
+  await ensureDatabase(client, database);
+  const selected = domains ?? Object.keys(allSchemas);
+  for (const domain of selected) {
+    const schema = allSchemas[domain];
+    if (!schema)
+      throw new Error(`Unknown schema domain: ${domain}`);
+    const stmts = renderSchema(schema);
+    for (const stmt of stmts) {
+      await client.execute(database, "sql", stmt);
+    }
+  }
+}
+async function ensureDatabase(client, database) {
+  const existing = await client.listDatabases();
+  if (existing.includes(database))
+    return;
+  await client.command(`create database ${database}`);
+}
+
 // ../agent-memory/dist/src/memory/sessions.js
 import { randomUUID } from "node:crypto";
 async function startSession(client, db, input = {}) {
@@ -205,15 +484,74 @@ function extractRemoteName(url) {
   return m?.[1] ?? null;
 }
 
+// src/auto-register.ts
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, writeFileSync } from "node:fs";
+import { basename as basename2, dirname, join as join3 } from "node:path";
+import { execSync } from "node:child_process";
+function deriveProjectIdentity(cwd, gitRemoteUrl) {
+  const key = (gitRemoteUrl ? extractRemoteName(gitRemoteUrl) : null) ?? basename2(cwd);
+  return { key, db: toDbName(key) };
+}
+function toDbName(key) {
+  const sanitized = key.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return /^[0-9]/.test(sanitized) ? `p_${sanitized}` : sanitized;
+}
+var NEXT_CONFIGS = ["next.config.js", "next.config.mjs", "next.config.ts"];
+var EXPO_CONFIGS = ["app.json", "app.config.js", "app.config.ts"];
+function detectStack(cwd) {
+  const stack = [];
+  const has = (name) => existsSync3(join3(cwd, name));
+  if (has("composer.json")) stack.push("laravel");
+  const isNext = NEXT_CONFIGS.some(has);
+  if (isNext) stack.push("nextjs");
+  const isExpo = EXPO_CONFIGS.some((name) => has(name) && fileMentionsExpo(join3(cwd, name)));
+  if (isExpo) stack.push("expo");
+  if (has("tsconfig.json")) stack.push("typescript");
+  if (has("package.json") && !isNext && !isExpo) stack.push("javascript");
+  if (has("pyproject.toml") || has("requirements.txt")) stack.push("python");
+  return stack;
+}
+function fileMentionsExpo(path) {
+  try {
+    return /["']?\bexpo\b["']?\s*:/.test(readFileSync3(path, "utf8"));
+  } catch {
+    return false;
+  }
+}
+function registerProject(projectsPath, key, entry) {
+  const map = loadProjects(projectsPath, (err) => {
+    throw err;
+  });
+  if (map.projects[key]) return;
+  map.projects[key] = entry;
+  const dir = dirname(projectsPath);
+  if (!existsSync3(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(projectsPath, JSON.stringify(map, null, 2) + "\n");
+}
+function isGitRepo(cwd) {
+  try {
+    execSync("git rev-parse --is-inside-work-tree", { cwd, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/context-builder.ts
 function buildContext(input) {
   const lines = ["ArcadeDB context loaded:"];
   if (input.project) {
     const p = input.project;
-    const indexed = p.lastIndexed ?? "not indexed yet";
-    lines.push(
-      `  Project: ${p.name} (DB: ${p.db}, indexed: ${indexed}, ${p.fileCount} files, ${p.importCount} imports)`
-    );
+    if (p.autoRegistered && p.lastIndexed === null) {
+      lines.push(
+        `  Project: ${p.name} (DB: ${p.db}, auto-registered, not indexed yet, run /graph-index to index code)`
+      );
+    } else {
+      const indexed = p.lastIndexed ?? "not indexed yet";
+      lines.push(
+        `  Project: ${p.name} (DB: ${p.db}, indexed: ${indexed}, ${p.fileCount} files, ${p.importCount} imports)`
+      );
+    }
     if (p.types.length > 0) {
       lines.push(`  Schema: ${p.types.join(", ")}`);
     }
@@ -230,13 +568,13 @@ function extractorLine(extractorMode) {
 }
 
 // src/session-state.ts
-import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname2 } from "node:path";
 function readSessionState(claudeCodeSessionId) {
   const path = sessionStatePath(claudeCodeSessionId);
-  if (!existsSync3(path)) return null;
+  if (!existsSync4(path)) return null;
   try {
-    const raw = JSON.parse(readFileSync3(path, "utf8"));
+    const raw = JSON.parse(readFileSync4(path, "utf8"));
     return {
       ...raw,
       currentLine: raw.currentLine ?? 0,
@@ -248,13 +586,13 @@ function readSessionState(claudeCodeSessionId) {
 }
 function writeSessionState(state) {
   const path = sessionStatePath(state.claudeCodeSessionId);
-  const dir = dirname(path);
-  if (!existsSync3(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
+  const dir = dirname2(path);
+  if (!existsSync4(dir)) mkdirSync2(dir, { recursive: true });
+  writeFileSync2(path, JSON.stringify(state, null, 2) + "\n");
 }
 
 // src/hook-input.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 var KEYS = [
   "session_id",
   "transcript_path",
@@ -282,19 +620,19 @@ function parseHookInput(raw) {
 }
 function readHookInput() {
   try {
-    return parseHookInput(readFileSync4(0, "utf8"));
+    return parseHookInput(readFileSync5(0, "utf8"));
   } catch {
     return {};
   }
 }
 
 // src/transcript-lines.ts
-import { readFileSync as readFileSync5 } from "node:fs";
+import { readFileSync as readFileSync6 } from "node:fs";
 function countTranscriptLines(path) {
   if (!path) return 0;
   let buf;
   try {
-    buf = readFileSync5(path);
+    buf = readFileSync6(path);
   } catch {
     return 0;
   }
@@ -306,12 +644,12 @@ function countTranscriptLines(path) {
 }
 
 // src/capture-log.ts
-import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync2 } from "node:fs";
-import { dirname as dirname2 } from "node:path";
+import { appendFileSync, existsSync as existsSync5, mkdirSync as mkdirSync3 } from "node:fs";
+import { dirname as dirname3 } from "node:path";
 function logCapture(event, fields = {}) {
   try {
     const path = captureLogPath();
-    if (!existsSync4(dirname2(path))) mkdirSync2(dirname2(path), { recursive: true });
+    if (!existsSync5(dirname3(path))) mkdirSync3(dirname3(path), { recursive: true });
     appendFileSync(path, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
   } catch {
   }
@@ -326,15 +664,39 @@ async function main() {
   const match = findProject(map, cwd, remote);
   const env = loadEnv();
   const client = new Client(env);
+  let project = match;
+  let autoRegistered = false;
+  if (!match && isGitRepo(cwd)) {
+    const identity = deriveProjectIdentity(cwd, remote);
+    try {
+      const entry = {
+        db: identity.db,
+        path: cwd,
+        stack: detectStack(cwd),
+        indexLevel: 0,
+        lastIndexed: null
+      };
+      registerProject(projectsJsonPath(), identity.key, entry);
+      await applySchemas(client, identity.db, ["core", "code"]);
+      logCapture("project_registered", { key: identity.key, db: identity.db, cwd });
+      project = { key: identity.key, entry };
+      autoRegistered = true;
+    } catch (err) {
+      logError(err);
+      logCapture("project_register_failed", { key: identity.key, error: err?.message ?? String(err) });
+      project = null;
+    }
+  }
   let projectCtx = null;
-  if (match) {
-    projectCtx = await probeProject(client, match.entry.db, match.key, match.entry.lastIndexed);
+  if (project) {
+    projectCtx = await probeProject(client, project.entry.db, project.key, project.entry.lastIndexed);
+    if (autoRegistered) projectCtx.autoRegistered = true;
   }
   const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
   process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"] }) + "\n");
-  if (match) {
+  if (project) {
     const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID2()}`;
-    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd, claudeCodeSessionId, input.transcript_path).catch((err) => logError(err));
+    await tryStartSession(client, map.defaultMemoryDb, project.key, cwd, claudeCodeSessionId, input.transcript_path).catch((err) => logError(err));
   }
 }
 async function tryStartSession(client, memoryDb, repo, cwd, claudeCodeSessionId, transcriptPath) {
@@ -366,7 +728,7 @@ async function tryStartSession(client, memoryDb, repo, cwd, claudeCodeSessionId,
 }
 function resolveUserName(cwd) {
   try {
-    const out = execSync("git config user.name", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execSync2("git config user.name", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     const trimmed = out.trim();
     if (trimmed) return trimmed;
   } catch {
@@ -397,7 +759,7 @@ async function probeMemory(client, db) {
 }
 function safeGitRemote(cwd) {
   try {
-    const out = execSync("git remote get-url origin", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execSync2("git remote get-url origin", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     return out.trim() || null;
   } catch {
     return null;
@@ -406,7 +768,7 @@ function safeGitRemote(cwd) {
 function logError(err) {
   try {
     const path = hookErrorLogPath();
-    if (!existsSync5(dirname3(path))) mkdirSync3(dirname3(path), { recursive: true });
+    if (!existsSync6(dirname4(path))) mkdirSync4(dirname4(path), { recursive: true });
     appendFileSync2(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] session-start: ${err?.message ?? String(err)}
 `);
   } catch {

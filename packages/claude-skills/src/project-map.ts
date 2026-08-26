@@ -64,7 +64,7 @@ export function findProject(
   return null;
 }
 
-function extractRemoteName(url: string): string | null {
+export function extractRemoteName(url: string): string | null {
   const m = url.match(/[/:]([\w.-]+?)(?:\.git)?\s*$/);
   return m?.[1] ?? null;
 }

@@ -9,9 +9,11 @@ import {
   startSession,
   findLatestSessionForRepo,
   linkFollows,
+  applySchemas,
 } from "arcadedb-agent-memory";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
-import { loadProjects, findProject } from "./project-map.js";
+import { loadProjects, findProject, type FindResult, type ProjectEntry } from "./project-map.js";
+import { deriveProjectIdentity, detectStack, registerProject, isGitRepo } from "./auto-register.js";
 import {
   buildContext,
   type ProjectContext,
@@ -32,18 +34,43 @@ async function main(): Promise<void> {
   const env = loadEnv();
   const client = new Client(env);
 
+  let project: FindResult | null = match;
+  let autoRegistered = false;
+  if (!match && isGitRepo(cwd)) {
+    const identity = deriveProjectIdentity(cwd, remote);
+    try {
+      const entry: ProjectEntry = {
+        db: identity.db,
+        path: cwd,
+        stack: detectStack(cwd),
+        indexLevel: 0,
+        lastIndexed: null,
+      };
+      registerProject(projectsJsonPath(), identity.key, entry);
+      await applySchemas(client, identity.db, ["core", "code"]);
+      logCapture("project_registered", { key: identity.key, db: identity.db, cwd });
+      project = { key: identity.key, entry };
+      autoRegistered = true;
+    } catch (err) {
+      logError(err);
+      logCapture("project_register_failed", { key: identity.key, error: (err as Error)?.message ?? String(err) });
+      project = null;
+    }
+  }
+
   let projectCtx: ProjectContext | null = null;
-  if (match) {
-    projectCtx = await probeProject(client, match.entry.db, match.key, match.entry.lastIndexed);
+  if (project) {
+    projectCtx = await probeProject(client, project.entry.db, project.key, project.entry.lastIndexed);
+    if (autoRegistered) projectCtx.autoRegistered = true;
   }
   const memoryCtx = await probeMemory(client, map.defaultMemoryDb);
 
   process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"] }) + "\n");
 
-  // After context is printed, set up :Session lifecycle if we have a project match.
-  if (match) {
+  // After context is printed, set up :Session lifecycle if we have a project.
+  if (project) {
     const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID()}`;
-    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd, claudeCodeSessionId, input.transcript_path).catch(err => logError(err));
+    await tryStartSession(client, map.defaultMemoryDb, project.key, cwd, claudeCodeSessionId, input.transcript_path).catch(err => logError(err));
   }
 }
 

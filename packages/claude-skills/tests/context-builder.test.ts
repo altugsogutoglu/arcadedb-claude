@@ -85,3 +85,31 @@ describe("buildContext", () => {
     expect(out).toContain("LLM extractor: off");
   });
 });
+
+describe("buildContext — auto-registered project", () => {
+  const base = {
+    name: "auto-proj",
+    db: "auto_proj",
+    fileCount: 0,
+    importCount: 0,
+    types: [],
+  };
+  const memory = { db: "claude_memory", decisionCount: 0, insightCount: 0 };
+
+  it("uses the auto-registered wording when nothing is indexed yet", () => {
+    const text = buildContext({ project: { ...base, lastIndexed: null, autoRegistered: true }, memory });
+    expect(text).toMatch(/Project: auto-proj \(DB: auto_proj, auto-registered, not indexed yet, run \/graph-index to index code\)/);
+  });
+
+  it("uses the normal wording once the project has been indexed", () => {
+    const text = buildContext({ project: { ...base, lastIndexed: "2026-08-27", autoRegistered: true, fileCount: 5, importCount: 2 }, memory });
+    expect(text).not.toMatch(/auto-registered/);
+    expect(text).toMatch(/indexed: 2026-08-27, 5 files, 2 imports/);
+  });
+
+  it("uses the normal wording for a plain unindexed project", () => {
+    const text = buildContext({ project: { ...base, lastIndexed: null }, memory });
+    expect(text).not.toMatch(/auto-registered/);
+    expect(text).toMatch(/indexed: not indexed yet, 0 files, 0 imports/);
+  });
+});
