@@ -9,6 +9,8 @@ import { writeDryrunBatch } from "../src/dryrun-writer.js";
 import { executeLiveBatch } from "../src/extract-write.js";
 import { loadProjects } from "../src/project-map.js";
 import { projectsJsonPath, extractorErrorsPath } from "../src/env-paths.js";
+import { buildExtractorSystemPrompt } from "../src/extractor-prompt.js";
+import { logCapture } from "../src/capture-log.js";
 
 function flag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -47,6 +49,11 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  if (cmd === "extractor-prompt") {
+    process.stdout.write(buildExtractorSystemPrompt(buildVocabSnapshot()));
+    return 0;
+  }
+
   if (cmd === "extract-write") {
     const rawFile = flag(rest, "raw");
     const sessionDbId = flag(rest, "session");
@@ -58,6 +65,17 @@ async function main(): Promise<number> {
       return 1;
     }
 
+    const lines = flag(rest, "lines");
+    const turnArg = flag(rest, "turn");
+    const turn = turnArg === undefined ? undefined : Number(turnArg);
+    const lineEnd = lines ? Number(lines.split("..")[1]) : undefined;
+
+    const markIfRequested = (): void => {
+      if (turn !== undefined && Number.isFinite(turn)) {
+        markExtracted(ccSession, turn, Number.isFinite(lineEnd as number) ? lineEnd : undefined);
+      }
+    };
+
     const raw = readFileSync(rawFile, "utf8");
     const vocab = buildVocabSnapshot();
     const result = validateExtraction(raw, vocab);
@@ -66,6 +84,8 @@ async function main(): Promise<number> {
       const path = extractorErrorsPath(sessionDbId, new Date().toISOString().replace(/[:.]/g, "-"));
       if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, `validation failed: ${result.reason}\n\n${raw}`);
+      logCapture("validation_failed", { session: ccSession, sessionDbId, reason: result.reason });
+      markIfRequested();
       console.log(JSON.stringify({ ok: false, reason: result.reason }));
       return 0;
     }
@@ -96,7 +116,7 @@ async function main(): Promise<number> {
       }
     }
 
-    console.log(JSON.stringify({
+    const summary = {
       ok: true,
       mode,
       counts: {
@@ -108,7 +128,20 @@ async function main(): Promise<number> {
         failed: live.failed,
       },
       errors: live.errors,
-    }));
+    };
+
+    const liveFailed = mode === "live" && live.failed > 0;
+    if (liveFailed) {
+      logCapture("write_failed", { session: ccSession, sessionDbId, mode, lines, written: live.written, failed: live.failed, errors: live.errors });
+      console.error(`live write failed: ${live.failed} of ${result.valid.length} triples not written\n${live.errors.join("\n")}`);
+      console.log(JSON.stringify({ ...summary, ok: false }));
+      markIfRequested();
+      return 1;
+    }
+
+    markIfRequested();
+    logCapture("write", { session: ccSession, sessionDbId, mode, lines, written: live.written, failed: live.failed, invalid: result.invalid.length });
+    console.log(JSON.stringify(summary));
     return 0;
   }
 

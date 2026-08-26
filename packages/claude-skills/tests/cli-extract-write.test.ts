@@ -77,7 +77,7 @@ describe("arcadedb-skills extract-write (dryrun)", () => {
     expect(code).toBe(1);
   });
 
-  it("mode=live with no env config exits 0 and reports the error (no crash, no retry storm)", async () => {
+  it("mode=live with no env config exits 1 and reports the error (no crash, no retry storm)", async () => {
     const rawFile = join(tmpHome, "raw-live.json");
     writeFileSync(rawFile, JSON.stringify({
       triples: [{
@@ -92,10 +92,10 @@ describe("arcadedb-skills extract-write (dryrun)", () => {
       ["extract-write", "--raw", rawFile, "--session", "s-live", "--cc-session", "cc", "--turns", "1..2", "--mode", "live"],
       { HOME: tmpHome },
     );
-    expect(code).toBe(0);
+    expect(code).toBe(1);
 
     const out = JSON.parse(stdout);
-    expect(out.ok).toBe(true);
+    expect(out.ok).toBe(false);
     expect(out.errors.length).toBeGreaterThan(0);
     expect(out.counts.failed).toBe(1);
   });
@@ -117,5 +117,82 @@ describe("arcadedb-skills extract-write (dryrun)", () => {
     const errorsDir = join(tmpHome, ".config", "arcadedb", "extractor-errors");
     expect(existsSync(errorsDir)).toBe(true);
     expect(readdirSync(errorsDir).length).toBeGreaterThan(0);
+  });
+});
+
+describe("arcadedb-skills extract-write (state + failures)", () => {
+  function writeRaw(): string {
+    const rawFile = join(tmpHome, "raw.json");
+    writeFileSync(rawFile, JSON.stringify({
+      triples: [{
+        subject: { label: "Concept", props: { name: "capture" } },
+        verb: "ABOUT",
+        object: { label: "Concept", props: { name: "extractor" } },
+        evidence: "the extractor now writes live",
+      }],
+    }));
+    return rawFile;
+  }
+  function writeState(id: string): void {
+    mkdirSync(join(tmpHome, ".config", "arcadedb", "sessions"), { recursive: true });
+    writeFileSync(join(tmpHome, ".config", "arcadedb", "sessions", `${id}.json`), JSON.stringify({
+      claudeCodeSessionId: id, sessionDbId: "sess-9", repo: "r", cwd: "/r", userName: "u",
+      startedAt: new Date().toISOString(), currentTurnIdx: 12, lastExtractedTurnIdx: 0,
+      lastExtractedAt: new Date().toISOString(), currentLine: 200, lastExtractedLine: 0,
+    }));
+  }
+
+  it("marks the session extracted (turn + line) after a dryrun write", async () => {
+    writeState("cc-9");
+    const { code } = await runCli(
+      ["extract-write", "--raw", writeRaw(), "--session", "sess-9", "--cc-session", "cc-9",
+       "--turns", "1..12", "--lines", "1..200", "--turn", "12", "--mode", "dryrun"],
+      { HOME: tmpHome },
+    );
+    expect(code).toBe(0);
+    const state = JSON.parse(readFileSync(join(tmpHome, ".config", "arcadedb", "sessions", "cc-9.json"), "utf8"));
+    expect(state.lastExtractedTurnIdx).toBe(12);
+    expect(state.lastExtractedLine).toBe(200);
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"event":"write"');
+    expect(log).toContain('"lines":"1..200"');
+  });
+
+  it("exits 1 and logs write_failed when live write is unreachable", async () => {
+    writeState("cc-10");
+    writeFileSync(join(tmpHome, ".config", "arcadedb", ".env"),
+      "ARCADEDB_HTTP_URI=http://127.0.0.1:1\nARCADEDB_USERNAME=root\nARCADEDB_ROOT_PASSWORD=x\n");
+    writeFileSync(join(tmpHome, ".config", "arcadedb", "projects.json"),
+      JSON.stringify({ version: 1, defaultMemoryDb: "nope_db", projects: {} }));
+    const { code, stderr } = await runCli(
+      ["extract-write", "--raw", writeRaw(), "--session", "sess-9", "--cc-session", "cc-10",
+       "--turns", "1..12", "--lines", "1..200", "--turn", "12", "--mode", "live"],
+      { HOME: tmpHome },
+    );
+    expect(code).toBe(1);
+    expect(stderr).toMatch(/live write failed/i);
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"event":"write_failed"');
+    // audit batch still written
+    expect(existsSync(join(tmpHome, ".config", "arcadedb", "dryrun", "sess-9.jsonl"))).toBe(true);
+    // controller ruling 2: session state still gets marked so later Stop hooks don't re-block
+    const state = JSON.parse(readFileSync(join(tmpHome, ".config", "arcadedb", "sessions", "cc-10.json"), "utf8"));
+    expect(state.lastExtractedTurnIdx).toBe(12);
+  });
+
+  it("marks the session extracted when validation fails and --turn was given", async () => {
+    writeState("cc-11");
+    const rawFile = join(tmpHome, "raw-invalid.json");
+    writeFileSync(rawFile, JSON.stringify({ nope: true }));
+    const { code } = await runCli(
+      ["extract-write", "--raw", rawFile, "--session", "sess-9", "--cc-session", "cc-11",
+       "--turns", "1..12", "--lines", "1..200", "--turn", "12", "--mode", "dryrun"],
+      { HOME: tmpHome },
+    );
+    expect(code).toBe(0);
+    const state = JSON.parse(readFileSync(join(tmpHome, ".config", "arcadedb", "sessions", "cc-11.json"), "utf8"));
+    expect(state.lastExtractedTurnIdx).toBe(12);
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"event":"validation_failed"');
   });
 });
