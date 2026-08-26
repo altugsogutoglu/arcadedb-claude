@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import {
   readSessionState,
   writeSessionState,
@@ -9,6 +9,7 @@ import {
   markExtracted,
   type SessionState,
 } from "../src/session-state.js";
+import { sessionStatePath } from "../src/env-paths.js";
 
 let tmpHome: string;
 let originalHome: string | undefined;
@@ -39,6 +40,8 @@ describe("session-state", () => {
       currentTurnIdx: 0,
       lastExtractedTurnIdx: 0,
       lastExtractedAt: "2026-05-17T12:00:00.000Z",
+      currentLine: 0,
+      lastExtractedLine: 0,
     };
     writeSessionState(state);
     const read = readSessionState("cc-abc");
@@ -71,6 +74,8 @@ describe("session-state", () => {
       currentTurnIdx: 0,
       lastExtractedTurnIdx: 0,
       lastExtractedAt: "2026-05-17T12:00:00.000Z",
+      currentLine: 0,
+      lastExtractedLine: 0,
     };
     writeSessionState(original);
     const updated: SessionState = { ...original, currentTurnIdx: 5, lastExtractedTurnIdx: 3 };
@@ -159,5 +164,40 @@ describe("markExtracted", () => {
 
   it("returns null when state file is missing", () => {
     expect(markExtracted("nope-" + Date.now(), 5)).toBeNull();
+  });
+
+  it("normalizes missing line fields to 0 on read", () => {
+    const path = sessionStatePath("old-1");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({
+      claudeCodeSessionId: "old-1", sessionDbId: "db-1", repo: "r", cwd: "/r", userName: "u",
+      startedAt: "2026-01-01T00:00:00.000Z", currentTurnIdx: 3, lastExtractedTurnIdx: 0,
+      lastExtractedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    const s = readSessionState("old-1");
+    expect(s?.currentLine).toBe(0);
+    expect(s?.lastExtractedLine).toBe(0);
+  });
+
+  it("incrementTurn stores currentLine when provided", () => {
+    writeSessionState({
+      claudeCodeSessionId: "ln-1", sessionDbId: "db", repo: "r", cwd: "/r", userName: "u",
+      startedAt: "2026-01-01T00:00:00.000Z", currentTurnIdx: 0, lastExtractedTurnIdx: 0,
+      lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 0, lastExtractedLine: 0,
+    });
+    const s = incrementTurn("ln-1", 42);
+    expect(s?.currentTurnIdx).toBe(1);
+    expect(s?.currentLine).toBe(42);
+  });
+
+  it("markExtracted stores lastExtractedLine when provided", () => {
+    writeSessionState({
+      claudeCodeSessionId: "ln-2", sessionDbId: "db", repo: "r", cwd: "/r", userName: "u",
+      startedAt: "2026-01-01T00:00:00.000Z", currentTurnIdx: 5, lastExtractedTurnIdx: 0,
+      lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 90, lastExtractedLine: 0,
+    });
+    const s = markExtracted("ln-2", 5, 90);
+    expect(s?.lastExtractedTurnIdx).toBe(5);
+    expect(s?.lastExtractedLine).toBe(90);
   });
 });

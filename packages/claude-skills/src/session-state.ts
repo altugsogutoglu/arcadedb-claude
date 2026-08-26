@@ -12,13 +12,20 @@ export interface SessionState {
   currentTurnIdx: number;
   lastExtractedTurnIdx: number;
   lastExtractedAt: string;
+  currentLine: number;
+  lastExtractedLine: number;
 }
 
 export function readSessionState(claudeCodeSessionId: string): SessionState | null {
   const path = sessionStatePath(claudeCodeSessionId);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as SessionState;
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SessionState>;
+    return {
+      ...(raw as SessionState),
+      currentLine: raw.currentLine ?? 0,
+      lastExtractedLine: raw.lastExtractedLine ?? 0,
+    };
   } catch {
     return null;
   }
@@ -31,18 +38,20 @@ export function writeSessionState(state: SessionState): void {
   writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
 }
 
-export function incrementTurn(claudeCodeSessionId: string): SessionState | null {
+export function incrementTurn(claudeCodeSessionId: string, currentLine?: number): SessionState | null {
   const state = readSessionState(claudeCodeSessionId);
   if (!state) return null;
   state.currentTurnIdx += 1;
+  if (currentLine !== undefined) state.currentLine = currentLine;
   writeSessionState(state);
   return state;
 }
 
-export function markExtracted(claudeCodeSessionId: string, turnIdx: number): SessionState | null {
+export function markExtracted(claudeCodeSessionId: string, turnIdx: number, lineIdx?: number): SessionState | null {
   const state = readSessionState(claudeCodeSessionId);
   if (!state) return null;
   state.lastExtractedTurnIdx = turnIdx;
+  if (lineIdx !== undefined) state.lastExtractedLine = lineIdx;
   state.lastExtractedAt = new Date().toISOString();
   writeSessionState(state);
   return state;
