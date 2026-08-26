@@ -1,0 +1,57 @@
+# Backlog
+
+Items for the hybrid-memory revival. Ordered slices; each is shippable and
+provable on its own. Reviewing this file is step 1 of every new spec brainstorm.
+
+Full design: `docs/superpowers/specs/2026-06-17-hybrid-vector-memory-design.md`
+
+---
+
+## Phase 1 - Revive + go hybrid
+
+- **S1 - Fix capture (the trigger never fires)**
+  - Why: graph frozen since 2026-05-17. Nothing lands despite `live` banner.
+  - VERIFIED root cause: extractor subagent never dispatched. Stop hook is the only
+    trigger; its turn counter never advances / its `decision: block` never results in
+    a dispatch. Zero audit batches ever written. CLI itself works (repro'd).
+  - Fix direction (pending fork decision): make capture trigger reliably and
+    observably; do not depend on the agent silently honoring a Stop block.
+  - Done when: a real session's decision/insight appears in `claude_memory`,
+    proven by an integration test, AND a missed/failed capture is visible (logged),
+    not silent.
+  - Blocks: S2-S5. Nothing else matters until capture works.
+  - Status: root cause found, fix approach pending.
+
+- **S2 - embed module**
+  - Add `@xenova/transformers` + `all-MiniLM-L6-v2`. Single fn `embed(text)->float[384]`.
+  - Offline, no API. Unit test: known text -> stable vector, correct length.
+  - Status: not started. Depends on S1.
+
+- **S3 - vector index + write path**
+  - Create ArcadeDB JVector HNSW index (COSINE) on `embedding` of Decision/Insight/QA.
+  - extract-write CLI embeds each note on write. Backfill existing 6 nodes.
+  - Done when: stored node has 384-dim embedding, read-back matches.
+  - Status: not started. Depends on S2.
+
+- **S4 - semantic retrieval**
+  - graph-query skill semantic mode: embed query -> `vectorNeighbors()` top-K ->
+    optional graph hop for related context.
+  - Done when: synonym query hits (e.g. "lease pricing" matches "rental cost logic").
+  - Status: not started. Depends on S3.
+
+- **S5 - pattern surface at SessionStart**
+  - Semantic pre-fetch of relevant past insights / do-don'ts for the active project,
+    injected into SessionStart context.
+  - Done when: starting a session surfaces a relevant prior insight.
+  - Status: not started. Depends on S4.
+
+---
+
+## Deferred / later
+
+- **Re-embed on model change** - if we swap embedding models, need a re-index path.
+  - Why deferred: only matters once a second model is in play. YAGNI for now.
+  - First identified: 2026-06-17.
+- **Memory poisoning / context security** (OWASP LLM08 + 2026 Agentic Top 10).
+  - Why deferred: single-user local DB, low risk now. Revisit if shared/multi-user.
+  - First identified: 2026-06-17.
