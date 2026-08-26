@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -76,32 +76,55 @@ describe("stop hook", () => {
   });
 
   it("emits block JSON when threshold tripped", async () => {
+    const transcript = join(tmpHome, "t.jsonl");
+    writeFileSync(transcript, Array.from({ length: 120 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n");
     writeFileSync(
       join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
       JSON.stringify({
-        claudeCodeSessionId: "abc",
-        sessionDbId: "uuid-trip",
-        repo: "demo",
-        cwd: "/tmp",
-        userName: "Tester",
-        startedAt: "2026-05-19T10:00:00.000Z",
-        currentTurnIdx: 9, // increment → 10, trips at default ARCADEDB_EXTRACT_TURNS=10
-        lastExtractedTurnIdx: 0,
-        lastExtractedAt: "2026-05-19T10:00:00.000Z",
+        claudeCodeSessionId: "abc", sessionDbId: "db-1", repo: "r", cwd: "/r", userName: "u",
+        startedAt: "2026-01-01T00:00:00.000Z", currentTurnIdx: 9, lastExtractedTurnIdx: 0,
+        lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 30, lastExtractedLine: 30,
       }),
     );
-
     const { stdout, status } = await runStop(
-      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: "/tmp/t" }),
-      { HOME: tmpHome, ARCADEDB_EXTRACTOR: "dryrun" },
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: transcript }),
+      { HOME: tmpHome, ARCADEDB_EXTRACTOR: "dryrun", CLAUDE_PLUGIN_ROOT: "/plug" },
     );
     expect(status).toBe(0);
-    const parsed = JSON.parse(stdout);
-    expect(parsed.decision).toBe("block");
-    expect(parsed.reason).toMatch(/--mode dryrun/);
-    expect(parsed.reason).toMatch(/uuid-trip/);
-    expect(parsed.reason).toMatch(/demo/);
-    expect(parsed.reason).toMatch(/1\.\.10/);
+    const out = JSON.parse(stdout);
+    expect(out.decision).toBe("block");
+    expect(out.reason).toContain("- lines: 31..120");
+    expect(out.reason).toContain("- turn: 10");
+    expect(out.reason).toContain("- cli: node /plug/hooks/cli.js");
+    expect(out.reason).toContain("- mode: dryrun");
+    expect(out.reason).toContain(`- transcript_path: ${transcript}`);
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8").trim().split("\n").map(l => JSON.parse(l));
+    expect(log.at(-1)).toMatchObject({ event: "trigger", session: "abc", lines: "31..120", turn: 10 });
+  });
+
+  it("logs skip:no_state when the state file is missing", async () => {
+    await runStop(JSON.stringify({ session_id: "ghost", stop_hook_active: false }), { HOME: tmpHome, ARCADEDB_EXTRACTOR: "live" });
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"event":"skip"');
+    expect(log).toContain('"reason":"no_state"');
+    expect(log).toContain('"session":"ghost"');
+  });
+
+  it("logs skip:not_due and still advances the turn counter when under threshold", async () => {
+    writeFileSync(
+      join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
+      JSON.stringify({
+        claudeCodeSessionId: "abc", sessionDbId: "db-1", repo: "r", cwd: "/r", userName: "u",
+        startedAt: new Date().toISOString(), currentTurnIdx: 0, lastExtractedTurnIdx: 0,
+        lastExtractedAt: new Date().toISOString(), currentLine: 0, lastExtractedLine: 0,
+      }),
+    );
+    const { stdout } = await runStop(JSON.stringify({ session_id: "abc", stop_hook_active: false }), { HOME: tmpHome, ARCADEDB_EXTRACTOR: "live" });
+    expect(stdout).toBe("");
+    const state = JSON.parse(readFileSync(join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"), "utf8"));
+    expect(state.currentTurnIdx).toBe(1);
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"reason":"not_due"');
   });
 
   it("does nothing when ARCADEDB_EXTRACTOR=off", async () => {
@@ -147,7 +170,7 @@ describe("stop hook", () => {
     );
     const out = JSON.parse(stdout);
     expect(out.decision).toBe("block");
-    expect(out.reason).toContain("--mode live");
+    expect(out.reason).toContain("- mode: live");
     expect(out.reason).toContain("subagent_type=extractor");
   });
 
@@ -172,7 +195,7 @@ describe("stop hook", () => {
     );
     const out = JSON.parse(stdout);
     expect(out.decision).toBe("block");
-    expect(out.reason).toContain("--mode dryrun");
+    expect(out.reason).toContain("- mode: dryrun");
   });
 
   it("does not trip when delta is small and no time elapsed", async () => {
