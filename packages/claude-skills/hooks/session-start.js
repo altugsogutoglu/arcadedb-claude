@@ -806,13 +806,18 @@ function runnerPath() {
   const here = fileURLToPath(import.meta.url);
   return here.endsWith(".ts") ? join6(dirname4(here), "index-runner.ts") : join6(dirname4(here), "index.js");
 }
+function runnerArgv(runner, args) {
+  const argv = runner.endsWith(".ts") ? [createRequire(import.meta.url).resolve("tsx/cli"), runner] : [runner];
+  argv.push(...args);
+  return argv;
+}
 function spawnIndexer(args) {
   try {
     const runner = args.runner ?? runnerPath();
     const log = openSync(join6(configDir(), `index-${args.key}.log`), "a");
-    const argv = runner.endsWith(".ts") ? [createRequire(import.meta.url).resolve("tsx/cli"), runner] : [runner];
-    argv.push("--root", args.root, "--db", args.db, "--key", args.key);
-    if (args.stack?.length) argv.push("--stack", args.stack.join(","));
+    const cmdArgs = ["--root", args.root, "--db", args.db, "--key", args.key];
+    if (args.stack?.length) cmdArgs.push("--stack", args.stack.join(","));
+    const argv = runnerArgv(runner, cmdArgs);
     const child = spawn(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
     closeSync(log);
     child.unref();

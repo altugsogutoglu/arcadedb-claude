@@ -13,15 +13,22 @@ export function runnerPath(): string {
   return here.endsWith(".ts") ? join(dirname(here), "index-runner.ts") : join(dirname(here), "index.js");
 }
 
+/** Build the full argv for running `runner`, prefixing the tsx CLI when the runner is a .ts source file (under tsx, not bundled). */
+export function runnerArgv(runner: string, args: string[]): string[] {
+  const argv = runner.endsWith(".ts")
+    ? [createRequire(import.meta.url).resolve("tsx/cli"), runner]
+    : [runner];
+  argv.push(...args);
+  return argv;
+}
+
 export function spawnIndexer(args: { root: string; db: string; key: string; stack?: string[]; runner?: string }): number | null {
   try {
     const runner = args.runner ?? runnerPath();
     const log = openSync(join(configDir(), `index-${args.key}.log`), "a");
-    const argv = runner.endsWith(".ts")
-      ? [createRequire(import.meta.url).resolve("tsx/cli"), runner]
-      : [runner];
-    argv.push("--root", args.root, "--db", args.db, "--key", args.key);
-    if (args.stack?.length) argv.push("--stack", args.stack.join(","));
+    const cmdArgs = ["--root", args.root, "--db", args.db, "--key", args.key];
+    if (args.stack?.length) cmdArgs.push("--stack", args.stack.join(","));
+    const argv = runnerArgv(runner, cmdArgs);
     const child = spawn(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
     closeSync(log);
     child.unref();

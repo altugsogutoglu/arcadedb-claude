@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // bin/arcadedb-skills.ts
-import { readFileSync as readFileSync4, writeFileSync as writeFileSync2, mkdirSync as mkdirSync4, existsSync as existsSync6 } from "node:fs";
-import { dirname as dirname4 } from "node:path";
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync4, mkdirSync as mkdirSync6, existsSync as existsSync9 } from "node:fs";
+import { dirname as dirname7 } from "node:path";
 
 // ../agent-memory/dist/src/errors.js
 var ArcadeDBConnectionError = class extends Error {
@@ -583,6 +583,7 @@ async function executeLiveBatch(valid, deps) {
 
 // src/project-map.ts
 import { readFileSync as readFileSync3, existsSync as existsSync4 } from "node:fs";
+import { basename } from "node:path";
 var DEFAULT_MAP = {
   version: 1,
   defaultMemoryDb: "claude_memory",
@@ -601,6 +602,24 @@ function loadProjects(path, onError) {
   if (!parsed.defaultMemoryDb) parsed.defaultMemoryDb = "claude_memory";
   if (!parsed.projects) parsed.projects = {};
   return parsed;
+}
+function findProject(map, cwd, gitRemoteUrl) {
+  for (const [key, entry] of Object.entries(map.projects)) {
+    if (entry.path === cwd) return { key, entry };
+  }
+  const base = basename(cwd);
+  if (map.projects[base]) return { key: base, entry: map.projects[base] };
+  if (gitRemoteUrl) {
+    const remoteName = extractRemoteName(gitRemoteUrl);
+    if (remoteName && map.projects[remoteName]) {
+      return { key: remoteName, entry: map.projects[remoteName] };
+    }
+  }
+  return null;
+}
+function extractRemoteName(url) {
+  const m = url.match(/[/:]([\w.-]+?)(?:\.git)?\s*$/);
+  return m?.[1] ?? null;
 }
 
 // src/extractor-prompt.ts
@@ -734,6 +753,266 @@ function logCapture(event, fields = {}) {
   }
 }
 
+// src/config-cli.ts
+import { spawnSync } from "node:child_process";
+
+// src/config.ts
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync4, writeFileSync as writeFileSync2, renameSync, chmodSync } from "node:fs";
+import { dirname as dirname4, join as join3 } from "node:path";
+var DEFAULTS = {
+  httpUri: "http://localhost:2480",
+  username: "root",
+  memoryDb: "claude_memory",
+  autoIndex: true
+};
+var KEYS = {
+  httpUri: "ARCADEDB_HTTP_URI",
+  username: "ARCADEDB_USERNAME",
+  password: "ARCADEDB_ROOT_PASSWORD",
+  memoryDb: "ARCADEDB_MEMORY_DB",
+  autoIndex: "ARCADEDB_AUTO_INDEX"
+};
+function envFilePath() {
+  return join3(configDir(), ".env");
+}
+function readEnvFile(path = envFilePath()) {
+  if (!existsSync6(path)) return {};
+  const map = {};
+  for (const line of readFileSync4(path, "utf8").split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const eq = t.indexOf("=");
+    if (eq === -1) continue;
+    map[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
+  }
+  return map;
+}
+function writeEnvFile(values, path = envFilePath()) {
+  const merged = { ...readEnvFile(path), ...values };
+  const body = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
+  if (!existsSync6(dirname4(path))) mkdirSync4(dirname4(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync2(tmp, body, { mode: 384 });
+  chmodSync(tmp, 384);
+  renameSync(tmp, path);
+}
+function pick(key, processEnv, file, fallback) {
+  const fromEnv = processEnv[key];
+  if (fromEnv !== void 0 && fromEnv !== "") return { value: fromEnv, source: "env" };
+  const fromFile = file[key];
+  if (fromFile !== void 0 && fromFile !== "") return { value: fromFile, source: "file" };
+  return { value: fallback, source: "default" };
+}
+function resolveConfig(opts = {}) {
+  const envPath = opts.envPath ?? envFilePath();
+  const processEnv = opts.processEnv ?? process.env;
+  const file = readEnvFile(envPath);
+  const httpUri = pick(KEYS.httpUri, processEnv, file, DEFAULTS.httpUri);
+  const username = pick(KEYS.username, processEnv, file, DEFAULTS.username);
+  const password = pick(KEYS.password, processEnv, file, "");
+  const memoryDb = pick(KEYS.memoryDb, processEnv, file, DEFAULTS.memoryDb);
+  const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
+  return {
+    httpUri: httpUri.value.replace(/\/+$/, ""),
+    username: username.value,
+    password: password.value,
+    memoryDb: memoryDb.value,
+    autoIndex: autoIndexRaw.value.toLowerCase() !== "off",
+    envPath,
+    sources: {
+      httpUri: httpUri.source,
+      username: username.source,
+      password: password.source,
+      memoryDb: memoryDb.source,
+      autoIndex: autoIndexRaw.source
+    }
+  };
+}
+function toClientEnv(cfg) {
+  return { httpUri: cfg.httpUri, username: cfg.username, password: cfg.password };
+}
+
+// src/server-probe.ts
+async function get(url, headers, timeoutMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers, signal: ctrl.signal });
+    return { status: res.status };
+  } catch (e) {
+    return { error: e.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function probeServer(cfg, timeoutMs = 2e3) {
+  const started = Date.now();
+  const ready = await get(`${cfg.httpUri}/api/v1/ready`, {}, timeoutMs);
+  if ("error" in ready || ready.status < 200 || ready.status >= 300) {
+    return { status: "unreachable", httpUri: cfg.httpUri, latencyMs: Date.now() - started, detail: "error" in ready ? ready.error : `HTTP ${ready.status}` };
+  }
+  if (cfg.password === "") {
+    return { status: "no_password", httpUri: cfg.httpUri, latencyMs: Date.now() - started };
+  }
+  const auth = "Basic " + Buffer.from(`${cfg.username}:${cfg.password}`).toString("base64");
+  const dbs = await get(`${cfg.httpUri}/api/v1/databases`, { Authorization: auth }, timeoutMs);
+  const latencyMs = Date.now() - started;
+  if ("error" in dbs) return { status: "unreachable", httpUri: cfg.httpUri, latencyMs, detail: dbs.error };
+  if (dbs.status === 401 || dbs.status === 403) return { status: "unauthorized", httpUri: cfg.httpUri, latencyMs };
+  if (dbs.status >= 200 && dbs.status < 300) return { status: "ok", httpUri: cfg.httpUri, latencyMs };
+  return { status: "unreachable", httpUri: cfg.httpUri, latencyMs, detail: `HTTP ${dbs.status}` };
+}
+var OFF_LINE = "  Capture and code graph are off until then.";
+function probeBanner(r, username) {
+  switch (r.status) {
+    case "ok":
+      return [`  Server: ${r.httpUri} (ok, ${r.latencyMs} ms)`];
+    case "unreachable":
+      return [`ArcadeDB: server not reachable at ${r.httpUri}. Start ArcadeDB or run: /arcadedb-config set server http://host:port`, OFF_LINE];
+    case "no_password":
+      return [`ArcadeDB: server reachable at ${r.httpUri} but no password configured. Run: /arcadedb-config set password <root-password>`, OFF_LINE];
+    case "unauthorized":
+      return [`ArcadeDB: authentication failed at ${r.httpUri} for user ${username}. Run: /arcadedb-config set password <root-password>`, OFF_LINE];
+  }
+}
+
+// src/auto-register.ts
+import { existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync5, renameSync as renameSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename as basename2, dirname as dirname5, join as join4 } from "node:path";
+function writeProjectsFile(projectsPath, map) {
+  const dir = dirname5(projectsPath);
+  if (!existsSync7(dir)) mkdirSync5(dir, { recursive: true });
+  const tmp = `${projectsPath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync3(tmp, JSON.stringify(map, null, 2) + "\n");
+  renameSync2(tmp, projectsPath);
+}
+function removeProject(projectsPath, key) {
+  const map = loadProjects(projectsPath, (err) => {
+    throw err;
+  });
+  if (!map.projects[key]) return false;
+  delete map.projects[key];
+  writeProjectsFile(projectsPath, map);
+  return true;
+}
+
+// src/index-need.ts
+import { existsSync as existsSync8, readFileSync as readFileSync6 } from "node:fs";
+import { join as join5 } from "node:path";
+function stalePath() {
+  return join5(configDir(), "stale.log");
+}
+function staleEditsSince(path, key, since) {
+  if (!existsSync8(path)) return 0;
+  const sinceMs = since ? new Date(since).getTime() : -Infinity;
+  let n = 0;
+  for (const line of readFileSync6(path, "utf8").split("\n")) {
+    const m = /^\[([^\]]+)\] (\S+) \(/.exec(line);
+    if (!m || m[2] !== key) continue;
+    if (new Date(m[1]).getTime() > sinceMs) n++;
+  }
+  return n;
+}
+
+// src/index-spawn.ts
+import { createRequire } from "node:module";
+import { dirname as dirname6, join as join6 } from "node:path";
+import { fileURLToPath } from "node:url";
+function runnerPath() {
+  const root = process.env["CLAUDE_PLUGIN_ROOT"];
+  if (root) return join6(root, "hooks", "index.js");
+  const here = fileURLToPath(import.meta.url);
+  return here.endsWith(".ts") ? join6(dirname6(here), "index-runner.ts") : join6(dirname6(here), "index.js");
+}
+function runnerArgv(runner, args) {
+  const argv = runner.endsWith(".ts") ? [createRequire(import.meta.url).resolve("tsx/cli"), runner] : [runner];
+  argv.push(...args);
+  return argv;
+}
+
+// src/config-cli.ts
+var SET_KEYS = {
+  server: { env: "ARCADEDB_HTTP_URI", validate: (v) => /^https?:\/\/[^\s/]+$/.test(v) ? null : "expected http://host:port" },
+  user: { env: "ARCADEDB_USERNAME", validate: (v) => v.trim() ? null : "expected a user name" },
+  password: { env: "ARCADEDB_ROOT_PASSWORD", validate: (v) => v ? null : "expected a non-empty password" },
+  "memory-db": { env: "ARCADEDB_MEMORY_DB", validate: (v) => /^[a-z][a-z0-9_]*$/.test(v) ? null : "expected [a-z][a-z0-9_]*" },
+  "auto-index": { env: "ARCADEDB_AUTO_INDEX", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" }
+};
+function pad(s, n) {
+  return s.padEnd(n);
+}
+async function configShow(io) {
+  const cfg = resolveConfig();
+  const map = loadProjects(projectsJsonPath());
+  const memoryDb = cfg.sources.memoryDb === "default" ? map.defaultMemoryDb : cfg.memoryDb;
+  io.out(`ArcadeDB config (${cfg.envPath})`);
+  io.out(`  ${pad("server:", 12)}${pad(cfg.httpUri, 24)}(${cfg.sources.httpUri})`);
+  io.out(`  ${pad("user:", 12)}${pad(cfg.username, 24)}(${cfg.sources.username})`);
+  io.out(`  ${pad("password:", 12)}${pad(cfg.password ? "********" : "(not set)", 24)}(${cfg.sources.password})`);
+  io.out(`  ${pad("memory-db:", 12)}${pad(memoryDb, 24)}(${cfg.sources.memoryDb})`);
+  io.out(`  ${pad("auto-index:", 12)}${pad(cfg.autoIndex ? "on" : "off", 24)}(${cfg.sources.autoIndex})`);
+  const probe = await probeServer(toClientEnv(cfg));
+  const bannerLines = probeBanner(probe, cfg.username);
+  io.out(probe.status === "ok" ? bannerLines[0].replace(/^ {2}/, "") : `Server: ${bannerLines[0]}`);
+  const keys = Object.keys(map.projects);
+  io.out(`Projects (${keys.length}):`);
+  for (const key of keys) {
+    const e = map.projects[key];
+    io.out(`  ${key} -> ${e.db} (indexed: ${e.lastIndexed ?? "never"}, stale edits: ${staleEditsSince(stalePath(), key, e.lastIndexed)}, ${e.path})`);
+  }
+  return 0;
+}
+function configSet(key, value, io) {
+  const spec = SET_KEYS[key];
+  if (!spec) {
+    io.err?.(`unknown key: ${key} (server|user|password|memory-db|auto-index)`);
+    return 1;
+  }
+  const problem = spec.validate(value);
+  if (problem) {
+    io.err?.(`invalid value for ${key}: ${problem}`);
+    return 1;
+  }
+  writeEnvFile({ [spec.env]: value });
+  io.out(`${key} updated in ${resolveConfig().envPath}`);
+  return 0;
+}
+async function configTest(io) {
+  const cfg = resolveConfig();
+  const probe = await probeServer(toClientEnv(cfg));
+  for (const line of probeBanner(probe, cfg.username)) io.out(line.replace(/^ {2}/, ""));
+  return probe.status === "ok" ? 0 : 1;
+}
+async function configForget(key, dropDb, io) {
+  const map = loadProjects(projectsJsonPath());
+  const entry = map.projects[key];
+  if (!entry) {
+    io.err?.(`not registered: ${key}`);
+    return 1;
+  }
+  if (dropDb) {
+    const client = new Client(toClientEnv(resolveConfig()));
+    await client.command(`drop database ${entry.db}`);
+    io.out(`dropped database ${entry.db}`);
+  }
+  removeProject(projectsJsonPath(), key);
+  io.out(`forgot ${key}`);
+  return 0;
+}
+async function configIndex(keyArg, cwd, io) {
+  const map = loadProjects(projectsJsonPath());
+  const match = keyArg ? map.projects[keyArg] ? { key: keyArg, entry: map.projects[keyArg] } : null : findProject(map, cwd, null);
+  if (!match) {
+    io.err?.("not registered: start a Claude Code session in the repo root once, then re-run");
+    return 1;
+  }
+  const cmdArgs = ["--root", match.entry.path, "--db", match.entry.db, "--key", match.key];
+  if (match.entry.stack.length) cmdArgs.push("--stack", match.entry.stack.join(","));
+  const argv = runnerArgv(runnerPath(), cmdArgs);
+  const r = spawnSync(process.execPath, argv, { stdio: "inherit", env: process.env });
+  return r.status ?? 1;
+}
+
 // bin/arcadedb-skills.ts
 function flag(argv, name) {
   const i = argv.indexOf(`--${name}`);
@@ -745,6 +1024,7 @@ function usage() {
   console.error("  mark-extracted --session <id> --turn <n>   update session state after extractor finishes");
   console.error("  extractor-prompt                           print the extractor system prompt");
   console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>]");
+  console.error("  config show | set <server|user|password|memory-db|auto-index> <value> | test | forget <key> [--drop-db] | index [<key>]");
 }
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -791,13 +1071,13 @@ async function main() {
         markExtracted(ccSession, turn, Number.isFinite(lineEnd) ? lineEnd : void 0);
       }
     };
-    const raw = readFileSync4(rawFile, "utf8");
+    const raw = readFileSync7(rawFile, "utf8");
     const vocab = buildVocabSnapshot();
     const result = validateExtraction(raw, vocab);
     if (!result.ok) {
       const path = extractorErrorsPath(sessionDbId, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"));
-      if (!existsSync6(dirname4(path))) mkdirSync4(dirname4(path), { recursive: true });
-      writeFileSync2(path, `validation failed: ${result.reason}
+      if (!existsSync9(dirname7(path))) mkdirSync6(dirname7(path), { recursive: true });
+      writeFileSync4(path, `validation failed: ${result.reason}
 
 ${raw}`);
       logCapture("validation_failed", { session: ccSession, sessionDbId, reason: result.reason });
@@ -855,6 +1135,41 @@ ${live.errors.join("\n")}`);
     logCapture("write", { session: ccSession, sessionDbId, mode, lines, written: live.written, failed: live.failed, invalid: result.invalid.length });
     console.log(JSON.stringify(summary));
     return 0;
+  }
+  if (cmd === "config") {
+    const [sub, ...args] = rest;
+    const io = { out: (s) => console.log(s), err: (s) => console.error(s) };
+    switch (sub) {
+      case "show":
+        return configShow(io);
+      case "set": {
+        const [key, ...valueParts] = args;
+        if (!key || valueParts.length === 0) {
+          console.error("usage: arcadedb-skills config set <server|user|password|memory-db|auto-index> <value>");
+          return 1;
+        }
+        const code = configSet(key, valueParts.join(" "), io);
+        if (code === 0 && (key === "server" || key === "user" || key === "password")) {
+          await configTest(io);
+        }
+        return code;
+      }
+      case "test":
+        return configTest(io);
+      case "forget": {
+        const key = args.find((a) => !a.startsWith("--"));
+        if (!key) {
+          console.error("usage: arcadedb-skills config forget <key> [--drop-db]");
+          return 1;
+        }
+        return configForget(key, args.includes("--drop-db"), io);
+      }
+      case "index":
+        return configIndex(args[0] ?? null, process.env["PWD"] ?? process.cwd(), io);
+      default:
+        console.error("usage: arcadedb-skills config <show|set|test|forget|index>");
+        return 1;
+    }
   }
   console.error(`unknown command: ${cmd}`);
   usage();

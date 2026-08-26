@@ -11,6 +11,7 @@ import { loadProjects } from "../src/project-map.js";
 import { projectsJsonPath, extractorErrorsPath } from "../src/env-paths.js";
 import { buildExtractorSystemPrompt } from "../src/extractor-prompt.js";
 import { logCapture } from "../src/capture-log.js";
+import { configShow, configSet, configTest, configForget, configIndex } from "../src/config-cli.js";
 
 function flag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -23,6 +24,7 @@ function usage(): void {
   console.error("  mark-extracted --session <id> --turn <n>   update session state after extractor finishes");
   console.error("  extractor-prompt                           print the extractor system prompt");
   console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>]");
+  console.error("  config show | set <server|user|password|memory-db|auto-index> <value> | test | forget <key> [--drop-db] | index [<key>]");
 }
 
 async function main(): Promise<number> {
@@ -144,6 +146,42 @@ async function main(): Promise<number> {
     logCapture("write", { session: ccSession, sessionDbId, mode, lines, written: live.written, failed: live.failed, invalid: result.invalid.length });
     console.log(JSON.stringify(summary));
     return 0;
+  }
+
+  if (cmd === "config") {
+    const [sub, ...args] = rest;
+    const io = { out: (s: string) => console.log(s), err: (s: string) => console.error(s) };
+    switch (sub) {
+      case "show":
+        return configShow(io);
+      case "set": {
+        const [key, ...valueParts] = args;
+        if (!key || valueParts.length === 0) {
+          console.error("usage: arcadedb-skills config set <server|user|password|memory-db|auto-index> <value>");
+          return 1;
+        }
+        const code = configSet(key, valueParts.join(" "), io);
+        if (code === 0 && (key === "server" || key === "user" || key === "password")) {
+          await configTest(io);
+        }
+        return code;
+      }
+      case "test":
+        return configTest(io);
+      case "forget": {
+        const key = args.find(a => !a.startsWith("--"));
+        if (!key) {
+          console.error("usage: arcadedb-skills config forget <key> [--drop-db]");
+          return 1;
+        }
+        return configForget(key, args.includes("--drop-db"), io);
+      }
+      case "index":
+        return configIndex(args[0] ?? null, process.env["PWD"] ?? process.cwd(), io);
+      default:
+        console.error("usage: arcadedb-skills config <show|set|test|forget|index>");
+        return 1;
+    }
   }
 
   console.error(`unknown command: ${cmd}`);

@@ -95,6 +95,14 @@ export function updateProject(projectsPath: string, key: string, patch: Partial<
   return next;
 }
 
+export function removeProject(projectsPath: string, key: string): boolean {
+  const map = loadProjects(projectsPath, err => { throw err; });
+  if (!map.projects[key]) return false;
+  delete map.projects[key];
+  writeProjectsFile(projectsPath, map);
+  return true;
+}
+
 export function gitToplevel(cwd: string): string | null {
   try {
     const out = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
