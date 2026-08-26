@@ -28,3 +28,7 @@ export function dryrunPath(sessionDbId: string): string {
 export function extractorErrorsPath(sessionDbId: string, timestamp: string): string {
   return join(configDir(), "extractor-errors", `${sessionDbId}-${timestamp}.txt`);
 }
+
+export function captureLogPath(): string {
+  return join(configDir(), "capture.log");
+}

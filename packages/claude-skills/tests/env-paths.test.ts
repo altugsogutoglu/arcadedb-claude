@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { projectsJsonPath, hookErrorLogPath, configDir, sessionsDir, sessionStatePath } from "../src/env-paths.js";
+import { projectsJsonPath, hookErrorLogPath, configDir, sessionsDir, sessionStatePath, captureLogPath } from "../src/env-paths.js";
 
 describe("env-paths", () => {
   it("configDir is ~/.config/arcadedb", () => {
@@ -24,5 +24,9 @@ describe("session paths", () => {
 
   it("sessionStatePath is ~/.config/arcadedb/sessions/<id>.json", () => {
     expect(sessionStatePath("cc-123")).toBe(join(homedir(), ".config", "arcadedb", "sessions", "cc-123.json"));
+  });
+
+  it("captureLogPath is under the config dir", () => {
+    expect(captureLogPath()).toBe(join(homedir(), ".config", "arcadedb", "capture.log"));
   });
 });
