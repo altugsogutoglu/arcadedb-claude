@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
@@ -11,8 +11,28 @@ import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
 const require = createRequire(import.meta.url);
 const tsxBin = require.resolve("tsx/cli");
 
-const exec = promisify(execFile);
+// promisify(execFile) leaves the child's stdin pipe open by default; since the hooks now
+// synchronously read stdin (readFileSync(0)) via readHookInput(), an unclosed stdin hangs
+// the child forever. Close it immediately so callers that don't need to send input still work.
+const execFileP = promisify(execFile);
+function exec(...args: Parameters<typeof execFileP>): ReturnType<typeof execFileP> {
+  const result = execFileP(...args);
+  result.child.stdin?.end();
+  return result;
+}
 const client = new Client(env);
+
+function runWithStdin(script: string, stdin: string, env: Record<string, string>): Promise<{ stdout: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [tsxBin, script], { env: { ...process.env, ...env }, cwd: process.cwd() });
+    let stdout = "";
+    child.stdout.on("data", d => { stdout += d.toString(); });
+    child.on("close", code => resolve({ stdout, code: code ?? 0 }));
+    child.on("error", reject);
+    child.stdin.write(stdin);
+    child.stdin.end();
+  });
+}
 
 let memoryDb: TempDb;
 let projectDb: TempDb;
@@ -142,5 +162,24 @@ describe("session-start hook — :Session lifecycle", () => {
     const after = await client.query<{ count: number }>(memoryDb.name, "cypher", "MATCH (s:Session) RETURN count(s) AS count");
     expect(after[0]?.count).toBe(before[0]?.count);
     expect(existsSync(join(tmpHome, ".config", "arcadedb", "sessions", "cc-nomatch.json"))).toBe(false);
+  });
+
+  it("names the state file after session_id from hook stdin, not CLAUDE_SESSION_ID env", async () => {
+    writeConfig({
+      "project-a": { db: projectDb.name, path: "/some/path/project-a", stack: ["nextjs"], indexLevel: 2, lastIndexed: null },
+    }, memoryDb.name);
+    const { code } = await runWithStdin(
+      "src/session-start.ts",
+      JSON.stringify({ session_id: "stdin-sess-1", cwd: "/elsewhere/project-a", hook_event_name: "SessionStart", source: "startup" }),
+      { HOME: tmpHome, PWD: "/unrelated/dir" },
+    );
+    expect(code).toBe(0);
+    const statePath = join(tmpHome, ".config", "arcadedb", "sessions", "stdin-sess-1.json");
+    expect(existsSync(statePath)).toBe(true);
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    expect(state.claudeCodeSessionId).toBe("stdin-sess-1");
+    expect(state.cwd).toBe("/elsewhere/project-a");
+    expect(state.currentLine).toBe(0);
+    expect(state.lastExtractedLine).toBe(0);
   });
 });

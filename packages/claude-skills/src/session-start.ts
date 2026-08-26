@@ -18,9 +18,11 @@ import {
   type MemoryContext,
 } from "./context-builder.js";
 import { writeSessionState } from "./session-state.js";
+import { readHookInput } from "./hook-input.js";
 
 async function main(): Promise<void> {
-  const cwd = process.env["PWD"] ?? process.cwd();
+  const input = readHookInput();
+  const cwd = input.cwd ?? process.env["PWD"] ?? process.cwd();
   const remote = safeGitRemote(cwd);
   const map = loadProjects(projectsJsonPath(), logError);
   const match = findProject(map, cwd, remote);
@@ -38,7 +40,8 @@ async function main(): Promise<void> {
 
   // After context is printed, set up :Session lifecycle if we have a project match.
   if (match) {
-    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd).catch(err => logError(err));
+    const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID()}`;
+    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd, claudeCodeSessionId).catch(err => logError(err));
   }
 }
 
@@ -47,8 +50,8 @@ async function tryStartSession(
   memoryDb: string,
   repo: string,
   cwd: string,
+  claudeCodeSessionId: string,
 ): Promise<void> {
-  const claudeCodeSessionId = process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID()}`;
   const userName = resolveUserName(cwd);
 
   // Find prior session for this repo BEFORE creating the new one (so excludeId isn't needed).
@@ -67,6 +70,8 @@ async function tryStartSession(
     currentTurnIdx: 0,
     lastExtractedTurnIdx: 0,
     lastExtractedAt: now,
+    currentLine: 0,
+    lastExtractedLine: 0,
   });
 
   if (previousSessionId) {
