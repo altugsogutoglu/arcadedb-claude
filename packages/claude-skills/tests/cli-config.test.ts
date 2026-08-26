@@ -69,4 +69,15 @@ describe("arcadedb-skills config", () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("not registered");
   });
+  it("forget --drop-db refuses an unsafe database name and leaves the entry", async () => {
+    writeFileSync(join(home, ".config", "arcadedb", "projects.json"), JSON.stringify({ version: 1, defaultMemoryDb: "claude_memory", projects: { a: { db: "x; drop database claude_memory", path: "/a", stack: [], indexLevel: 0, lastIndexed: null } } }));
+    const r = await runCli(["config", "forget", "a", "--drop-db"], { HOME: home });
+    expect(r.code).toBe(1);
+    const projects = JSON.parse(readFileSync(join(home, ".config", "arcadedb", "projects.json"), "utf8")).projects;
+    expect(Object.keys(projects)).toEqual(["a"]);
+  });
+  it("set rejects values with line breaks", async () => {
+    const r = await runCli(["config", "set", "user", "a\nb"], { HOME: home });
+    expect(r.code).toBe(1);
+  });
 });

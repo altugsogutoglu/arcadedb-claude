@@ -968,6 +968,10 @@ function configSet(key, value, io) {
     io.err?.(`unknown key: ${key} (server|user|password|memory-db|auto-index)`);
     return 1;
   }
+  if (/[\n\r]/.test(value)) {
+    io.err?.(`invalid value for ${key}: must not contain line breaks`);
+    return 1;
+  }
   const problem = spec.validate(value);
   if (problem) {
     io.err?.(`invalid value for ${key}: ${problem}`);
@@ -991,6 +995,10 @@ async function configForget(key, dropDb, io) {
     return 1;
   }
   if (dropDb) {
+    if (!/^[a-z][a-z0-9_]*$/.test(entry.db)) {
+      io.err?.(`refusing to drop database with unsafe name: ${entry.db}`);
+      return 1;
+    }
     const client = new Client(toClientEnv(resolveConfig()));
     await client.command(`drop database ${entry.db}`);
     io.out(`dropped database ${entry.db}`);
