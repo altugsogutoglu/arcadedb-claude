@@ -59,6 +59,8 @@ describe("session-state", () => {
       currentTurnIdx: 0,
       lastExtractedTurnIdx: 0,
       lastExtractedAt: "2026-05-17T12:00:00.000Z",
+      currentLine: 0,
+      lastExtractedLine: 0,
     });
     expect(existsSync(join(tmpHome, ".config", "arcadedb", "sessions", "cc-xyz.json"))).toBe(true);
   });
@@ -94,6 +96,8 @@ describe("session-state", () => {
       currentTurnIdx: 0,
       lastExtractedTurnIdx: 0,
       lastExtractedAt: "2026-05-17T12:00:00.000Z",
+      currentLine: 0,
+      lastExtractedLine: 0,
     });
     // corrupt the file
     const path = join(tmpHome, ".config", "arcadedb", "sessions", "cc-bad.json");
@@ -115,6 +119,8 @@ describe("incrementTurn", () => {
       currentTurnIdx: 4,
       lastExtractedTurnIdx: 0,
       lastExtractedAt: "2026-05-19T10:00:00.000Z",
+      currentLine: 0,
+      lastExtractedLine: 0,
     });
     const next = incrementTurn(claudeCodeSessionId);
     expect(next?.currentTurnIdx).toBe(5);
@@ -136,6 +142,8 @@ describe("incrementTurn", () => {
       currentTurnIdx: 2,
       lastExtractedTurnIdx: 0,
       lastExtractedAt: "2026-05-19T10:00:00.000Z",
+      currentLine: 0,
+      lastExtractedLine: 0,
     });
     incrementTurn(claudeCodeSessionId);
     const re = readSessionState(claudeCodeSessionId);
@@ -156,6 +164,8 @@ describe("markExtracted", () => {
       currentTurnIdx: 10,
       lastExtractedTurnIdx: 0,
       lastExtractedAt: "2026-05-19T10:00:00.000Z",
+      currentLine: 0,
+      lastExtractedLine: 0,
     });
     const updated = markExtracted(claudeCodeSessionId, 10);
     expect(updated?.lastExtractedTurnIdx).toBe(10);
