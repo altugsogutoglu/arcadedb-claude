@@ -58,3 +58,4 @@ Full design: `docs/superpowers/specs/2026-06-17-hybrid-vector-memory-design.md`
 - **SessionStart banner should show last capture.log write timestamp**, not just
   the env mode (banner currently says `live` regardless of health).
   - First identified: 2026-08-26.
+- **Stop-hook backoff when parent never dispatches the extractor**: today `delta >= turns` re-blocks every turn until extract-write marks state. Record `lastTriggeredTurnIdx` on trigger and require another `turns` before re-blocking. Why deferred: needs a state field + rate-limit change; capture.log (`trigger` without `write`) makes it diagnosable meanwhile. First identified: 2026-08-26.

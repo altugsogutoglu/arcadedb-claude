@@ -2,7 +2,8 @@
 
 // src/stop.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync3 } from "node:fs";
-import { dirname as dirname3 } from "node:path";
+import { dirname as dirname3, join as join2 } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // src/env-paths.ts
 import { homedir } from "node:os";
@@ -155,7 +156,7 @@ async function main() {
     return;
   }
   const currentLine = countTranscriptLines(input.transcript_path);
-  const state = incrementTurn(input.session_id, currentLine);
+  const state = incrementTurn(input.session_id, currentLine > 0 ? currentLine : void 0);
   if (!state) {
     logCapture("skip", { reason: "no_state", session: input.session_id });
     return;
@@ -169,9 +170,14 @@ async function main() {
     logCapture("skip", { reason: "not_due", session: input.session_id, turn: state.currentTurnIdx, line: currentLine });
     return;
   }
+  if (state.currentLine <= state.lastExtractedLine) {
+    logCapture("skip", { reason: "no_new_lines", session: input.session_id, line: state.currentLine });
+    return;
+  }
   const lines = `${state.lastExtractedLine + 1}..${state.currentLine}`;
-  const pluginRoot = process.env["CLAUDE_PLUGIN_ROOT"] ?? ".";
-  const cli = `node ${pluginRoot}/hooks/cli.js`;
+  const root = process.env["CLAUDE_PLUGIN_ROOT"];
+  const cliPath = root ? join2(root, "hooks", "cli.js") : join2(dirname3(fileURLToPath(import.meta.url)), "cli.js");
+  const cli = `node ${cliPath}`;
   logCapture("trigger", { session: input.session_id, sessionDbId: state.sessionDbId, lines, turn: state.currentTurnIdx });
   process.stdout.write(JSON.stringify({
     decision: "block",

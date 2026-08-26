@@ -743,7 +743,8 @@ function usage() {
   console.error("usage: arcadedb-skills <command> [options]");
   console.error("commands:");
   console.error("  mark-extracted --session <id> --turn <n>   update session state after extractor finishes");
-  console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun>");
+  console.error("  extractor-prompt                           print the extractor system prompt");
+  console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>]");
 }
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);

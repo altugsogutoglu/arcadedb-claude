@@ -16,6 +16,7 @@ async function runStop(stdin: string, env: Record<string, string | undefined>): 
       if (v !== undefined) childEnv[k] = v;
     }
     if (env["ARCADEDB_EXTRACTOR"] === undefined) delete childEnv["ARCADEDB_EXTRACTOR"];
+    if (env["CLAUDE_PLUGIN_ROOT"] === undefined) delete childEnv["CLAUDE_PLUGIN_ROOT"];
     for (const [k, v] of Object.entries(env)) {
       if (v !== undefined) childEnv[k] = v;
     }
@@ -150,6 +151,8 @@ describe("stop hook", () => {
   });
 
   it("dispatches in live mode by default (flag unset)", async () => {
+    const transcript = join(tmpHome, "live-mode.jsonl");
+    writeFileSync(transcript, Array.from({ length: 20 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n");
     writeFileSync(
       join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
       JSON.stringify({
@@ -162,10 +165,12 @@ describe("stop hook", () => {
         currentTurnIdx: 9,
         lastExtractedTurnIdx: 0,
         lastExtractedAt: "2026-05-19T10:00:00.000Z",
+        currentLine: 0,
+        lastExtractedLine: 0,
       }),
     );
     const { stdout } = await runStop(
-      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: "/tmp/t" }),
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: transcript }),
       { HOME: tmpHome, ARCADEDB_EXTRACTOR: undefined },
     );
     const out = JSON.parse(stdout);
@@ -175,6 +180,8 @@ describe("stop hook", () => {
   });
 
   it("dispatches in dryrun mode when ARCADEDB_EXTRACTOR=dryrun", async () => {
+    const transcript = join(tmpHome, "dryrun-mode.jsonl");
+    writeFileSync(transcript, Array.from({ length: 20 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n");
     writeFileSync(
       join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
       JSON.stringify({
@@ -187,15 +194,60 @@ describe("stop hook", () => {
         currentTurnIdx: 9,
         lastExtractedTurnIdx: 0,
         lastExtractedAt: "2026-05-19T10:00:00.000Z",
+        currentLine: 0,
+        lastExtractedLine: 0,
       }),
     );
     const { stdout } = await runStop(
-      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: "/tmp/t" }),
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: transcript }),
       { HOME: tmpHome, ARCADEDB_EXTRACTOR: "dryrun" },
     );
     const out = JSON.parse(stdout);
     expect(out.decision).toBe("block");
     expect(out.reason).toContain("- mode: dryrun");
+  });
+
+  it("does not regress state and skips with no_new_lines when transcript is unreadable", async () => {
+    const missingTranscript = join(tmpHome, "does-not-exist.jsonl");
+    writeFileSync(
+      join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
+      JSON.stringify({
+        claudeCodeSessionId: "abc", sessionDbId: "db-1", repo: "r", cwd: "/r", userName: "u",
+        startedAt: "2026-01-01T00:00:00.000Z", currentTurnIdx: 9, lastExtractedTurnIdx: 0,
+        lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 30, lastExtractedLine: 30,
+      }),
+    );
+    const { stdout, status } = await runStop(
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: missingTranscript }),
+      { HOME: tmpHome, ARCADEDB_EXTRACTOR: "dryrun" },
+    );
+    expect(status).toBe(0);
+    expect(stdout).toBe("");
+    const state = JSON.parse(readFileSync(join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"), "utf8"));
+    expect(state.currentLine).toBe(30);
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"reason":"no_new_lines"');
+  });
+
+  it("derives cli path from a sibling of stop.ts when CLAUDE_PLUGIN_ROOT is unset", async () => {
+    const transcript = join(tmpHome, "t.jsonl");
+    writeFileSync(transcript, Array.from({ length: 120 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n");
+    writeFileSync(
+      join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"),
+      JSON.stringify({
+        claudeCodeSessionId: "abc", sessionDbId: "db-1", repo: "r", cwd: "/r", userName: "u",
+        startedAt: "2026-01-01T00:00:00.000Z", currentTurnIdx: 9, lastExtractedTurnIdx: 0,
+        lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 30, lastExtractedLine: 30,
+      }),
+    );
+    const { stdout, status } = await runStop(
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: transcript }),
+      { HOME: tmpHome, ARCADEDB_EXTRACTOR: "dryrun", CLAUDE_PLUGIN_ROOT: undefined },
+    );
+    expect(status).toBe(0);
+    const out = JSON.parse(stdout);
+    expect(out.reason).toMatch(/- cli: node \/.*\/cli\.js/);
+    expect(out.reason).not.toContain("node ./hooks");
   });
 
   it("does not trip when delta is small and no time elapsed", async () => {

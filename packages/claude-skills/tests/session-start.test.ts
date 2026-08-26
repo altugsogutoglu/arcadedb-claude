@@ -182,4 +182,50 @@ describe("session-start hook — :Session lifecycle", () => {
     expect(state.currentLine).toBe(0);
     expect(state.lastExtractedLine).toBe(0);
   });
+
+  it("does not reset state or create a second :Session when the same session resumes", async () => {
+    writeConfig({
+      "project-a": { db: projectDb.name, path: "/some/path/project-a", stack: ["nextjs"], indexLevel: 2, lastIndexed: null },
+    }, memoryDb.name);
+
+    const stdin = JSON.stringify({ session_id: "resume-sess-1", cwd: "/elsewhere/project-a", hook_event_name: "SessionStart", source: "startup" });
+    await runWithStdin("src/session-start.ts", stdin, { HOME: tmpHome, PWD: "/unrelated/dir" });
+
+    const statePath = join(tmpHome, ".config", "arcadedb", "sessions", "resume-sess-1.json");
+    const stateFirst = JSON.parse(readFileSync(statePath, "utf8"));
+
+    const beforeRows = await client.query<{ count: number }>(memoryDb.name, "cypher",
+      "MATCH (s:Session {repo: 'project-a'}) RETURN count(s) AS count");
+
+    const resumeStdin = JSON.stringify({ session_id: "resume-sess-1", cwd: "/elsewhere/project-a", hook_event_name: "SessionStart", source: "resume" });
+    await runWithStdin("src/session-start.ts", resumeStdin, { HOME: tmpHome, PWD: "/unrelated/dir" });
+
+    const afterRows = await client.query<{ count: number }>(memoryDb.name, "cypher",
+      "MATCH (s:Session {repo: 'project-a'}) RETURN count(s) AS count");
+
+    const stateSecond = JSON.parse(readFileSync(statePath, "utf8"));
+
+    expect(stateSecond.sessionDbId).toBe(stateFirst.sessionDbId);
+    expect(afterRows[0]?.count).toBe(beforeRows[0]?.count);
+  });
+
+  it("seeds currentLine and lastExtractedLine from the transcript on a fresh session", async () => {
+    writeConfig({
+      "project-a": { db: projectDb.name, path: "/some/path/project-a", stack: ["nextjs"], indexLevel: 2, lastIndexed: null },
+    }, memoryDb.name);
+
+    const transcript = join(tmpHome, "seed.jsonl");
+    writeFileSync(transcript, Array.from({ length: 7 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n");
+
+    const stdin = JSON.stringify({
+      session_id: "seed-sess-1", cwd: "/elsewhere/project-a", hook_event_name: "SessionStart",
+      source: "startup", transcript_path: transcript,
+    });
+    await runWithStdin("src/session-start.ts", stdin, { HOME: tmpHome, PWD: "/unrelated/dir" });
+
+    const statePath = join(tmpHome, ".config", "arcadedb", "sessions", "seed-sess-1.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    expect(state.currentLine).toBe(7);
+    expect(state.lastExtractedLine).toBe(7);
+  });
 });

@@ -17,8 +17,10 @@ import {
   type ProjectContext,
   type MemoryContext,
 } from "./context-builder.js";
-import { writeSessionState } from "./session-state.js";
+import { writeSessionState, readSessionState } from "./session-state.js";
 import { readHookInput } from "./hook-input.js";
+import { countTranscriptLines } from "./transcript-lines.js";
+import { logCapture } from "./capture-log.js";
 
 async function main(): Promise<void> {
   const input = readHookInput();
@@ -41,7 +43,7 @@ async function main(): Promise<void> {
   // After context is printed, set up :Session lifecycle if we have a project match.
   if (match) {
     const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID()}`;
-    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd, claudeCodeSessionId).catch(err => logError(err));
+    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd, claudeCodeSessionId, input.transcript_path).catch(err => logError(err));
   }
 }
 
@@ -51,7 +53,14 @@ async function tryStartSession(
   repo: string,
   cwd: string,
   claudeCodeSessionId: string,
+  transcriptPath: string | undefined,
 ): Promise<void> {
+  // Same Claude session resumed: state already exists, do not reset it or create a second :Session.
+  if (readSessionState(claudeCodeSessionId)) {
+    logCapture("session_resumed", { session: claudeCodeSessionId });
+    return;
+  }
+
   const userName = resolveUserName(cwd);
 
   // Find prior session for this repo BEFORE creating the new one (so excludeId isn't needed).
@@ -60,6 +69,7 @@ async function tryStartSession(
   const newSessionId = await startSession(client, memoryDb, { repo });
 
   const now = new Date().toISOString();
+  const seedLine = countTranscriptLines(transcriptPath);
   writeSessionState({
     claudeCodeSessionId,
     sessionDbId: newSessionId,
@@ -70,8 +80,8 @@ async function tryStartSession(
     currentTurnIdx: 0,
     lastExtractedTurnIdx: 0,
     lastExtractedAt: now,
-    currentLine: 0,
-    lastExtractedLine: 0,
+    currentLine: seedLine,
+    lastExtractedLine: seedLine,
   });
 
   if (previousSessionId) {

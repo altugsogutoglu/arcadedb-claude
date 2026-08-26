@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // src/session-start.ts
-import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync2 } from "node:fs";
-import { dirname as dirname2 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync5, mkdirSync as mkdirSync3 } from "node:fs";
+import { dirname as dirname3 } from "node:path";
 import { execSync } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 
@@ -160,6 +160,9 @@ function sessionsDir() {
 function sessionStatePath(claudeCodeSessionId) {
   return join2(sessionsDir(), `${claudeCodeSessionId}.json`);
 }
+function captureLogPath() {
+  return join2(configDir(), "capture.log");
+}
 
 // src/project-map.ts
 import { readFileSync as readFileSync2, existsSync as existsSync2 } from "node:fs";
@@ -229,6 +232,20 @@ function extractorLine(extractorMode) {
 // src/session-state.ts
 import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+function readSessionState(claudeCodeSessionId) {
+  const path = sessionStatePath(claudeCodeSessionId);
+  if (!existsSync3(path)) return null;
+  try {
+    const raw = JSON.parse(readFileSync3(path, "utf8"));
+    return {
+      ...raw,
+      currentLine: raw.currentLine ?? 0,
+      lastExtractedLine: raw.lastExtractedLine ?? 0
+    };
+  } catch {
+    return null;
+  }
+}
 function writeSessionState(state) {
   const path = sessionStatePath(state.claudeCodeSessionId);
   const dir = dirname(path);
@@ -271,6 +288,35 @@ function readHookInput() {
   }
 }
 
+// src/transcript-lines.ts
+import { readFileSync as readFileSync5 } from "node:fs";
+function countTranscriptLines(path) {
+  if (!path) return 0;
+  let buf;
+  try {
+    buf = readFileSync5(path);
+  } catch {
+    return 0;
+  }
+  if (buf.length === 0) return 0;
+  let n = 0;
+  for (let i = 0; i < buf.length; i++) if (buf[i] === 10) n++;
+  if (buf[buf.length - 1] !== 10) n++;
+  return n;
+}
+
+// src/capture-log.ts
+import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync2 } from "node:fs";
+import { dirname as dirname2 } from "node:path";
+function logCapture(event, fields = {}) {
+  try {
+    const path = captureLogPath();
+    if (!existsSync4(dirname2(path))) mkdirSync2(dirname2(path), { recursive: true });
+    appendFileSync(path, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
+  } catch {
+  }
+}
+
 // src/session-start.ts
 async function main() {
   const input = readHookInput();
@@ -288,14 +334,19 @@ async function main() {
   process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"] }) + "\n");
   if (match) {
     const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID2()}`;
-    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd, claudeCodeSessionId).catch((err) => logError(err));
+    await tryStartSession(client, map.defaultMemoryDb, match.key, cwd, claudeCodeSessionId, input.transcript_path).catch((err) => logError(err));
   }
 }
-async function tryStartSession(client, memoryDb, repo, cwd, claudeCodeSessionId) {
+async function tryStartSession(client, memoryDb, repo, cwd, claudeCodeSessionId, transcriptPath) {
+  if (readSessionState(claudeCodeSessionId)) {
+    logCapture("session_resumed", { session: claudeCodeSessionId });
+    return;
+  }
   const userName = resolveUserName(cwd);
   const previousSessionId = await findLatestSessionForRepo(client, memoryDb, repo);
   const newSessionId = await startSession(client, memoryDb, { repo });
   const now = (/* @__PURE__ */ new Date()).toISOString();
+  const seedLine = countTranscriptLines(transcriptPath);
   writeSessionState({
     claudeCodeSessionId,
     sessionDbId: newSessionId,
@@ -306,8 +357,8 @@ async function tryStartSession(client, memoryDb, repo, cwd, claudeCodeSessionId)
     currentTurnIdx: 0,
     lastExtractedTurnIdx: 0,
     lastExtractedAt: now,
-    currentLine: 0,
-    lastExtractedLine: 0
+    currentLine: seedLine,
+    lastExtractedLine: seedLine
   });
   if (previousSessionId) {
     await linkFollows(client, memoryDb, newSessionId, previousSessionId);
@@ -355,8 +406,8 @@ function safeGitRemote(cwd) {
 function logError(err) {
   try {
     const path = hookErrorLogPath();
-    if (!existsSync4(dirname2(path))) mkdirSync2(dirname2(path), { recursive: true });
-    appendFileSync(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] session-start: ${err?.message ?? String(err)}
+    if (!existsSync5(dirname3(path))) mkdirSync3(dirname3(path), { recursive: true });
+    appendFileSync2(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] session-start: ${err?.message ?? String(err)}
 `);
   } catch {
   }

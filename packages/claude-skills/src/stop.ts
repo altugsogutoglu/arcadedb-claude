@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { hookErrorLogPath } from "./env-paths.js";
 import { incrementTurn } from "./session-state.js";
 import { shouldExtract } from "./rate-limit.js";
@@ -27,7 +28,7 @@ async function main(): Promise<void> {
   if (!input.session_id) { logCapture("skip", { reason: "no_session_id" }); return; }
 
   const currentLine = countTranscriptLines(input.transcript_path);
-  const state = incrementTurn(input.session_id, currentLine);
+  const state = incrementTurn(input.session_id, currentLine > 0 ? currentLine : undefined);
   if (!state) { logCapture("skip", { reason: "no_state", session: input.session_id }); return; }
 
   const tripped = shouldExtract(
@@ -40,9 +41,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (state.currentLine <= state.lastExtractedLine) {
+    logCapture("skip", { reason: "no_new_lines", session: input.session_id, line: state.currentLine });
+    return;
+  }
+
   const lines = `${state.lastExtractedLine + 1}..${state.currentLine}`;
-  const pluginRoot = process.env["CLAUDE_PLUGIN_ROOT"] ?? ".";
-  const cli = `node ${pluginRoot}/hooks/cli.js`;
+  const root = process.env["CLAUDE_PLUGIN_ROOT"];
+  const cliPath = root ? join(root, "hooks", "cli.js") : join(dirname(fileURLToPath(import.meta.url)), "cli.js");
+  const cli = `node ${cliPath}`;
 
   logCapture("trigger", { session: input.session_id, sessionDbId: state.sessionDbId, lines, turn: state.currentTurnIdx });
 
