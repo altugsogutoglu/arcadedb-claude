@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { openSync } from "node:fs";
+import { closeSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ export function runnerPath(): string {
   return here.endsWith(".ts") ? join(dirname(here), "index-runner.ts") : join(dirname(here), "index.js");
 }
 
-export function spawnIndexer(args: { root: string; db: string; key: string; stack: string[]; runner?: string }): number | null {
+export function spawnIndexer(args: { root: string; db: string; key: string; stack?: string[]; runner?: string }): number | null {
   try {
     const runner = args.runner ?? runnerPath();
     const log = openSync(join(configDir(), `index-${args.key}.log`), "a");
@@ -21,8 +21,9 @@ export function spawnIndexer(args: { root: string; db: string; key: string; stac
       ? [createRequire(import.meta.url).resolve("tsx/cli"), runner]
       : [runner];
     argv.push("--root", args.root, "--db", args.db, "--key", args.key);
-    if (args.stack.length) argv.push("--stack", args.stack.join(","));
+    if (args.stack?.length) argv.push("--stack", args.stack.join(","));
     const child = spawn(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
+    closeSync(log);
     child.unref();
     return child.pid ?? null;
   } catch {

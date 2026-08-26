@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync, realpathSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -188,7 +188,7 @@ describe("registerProject", () => {
   it("leaves no .tmp file behind", () => {
     const path = join(dir, "projects.json");
     registerProject(path, "alpha", entry("alpha_db"));
-    expect(existsSync(`${path}.tmp`)).toBe(false);
+    expect(readdirSync(dir).filter(f => f.endsWith(".tmp"))).toEqual([]);
   });
 });
 
@@ -200,7 +200,7 @@ describe("updateProject", () => {
     expect(out?.lastIndexed).toBe("2026-08-27T00:00:00.000Z");
     expect(JSON.parse(readFileSync(path, "utf8")).projects.a.indexLevel).toBe(2);
     expect(updateProject(path, "zzz", { indexLevel: 1 })).toBeNull();
-    expect(existsSync(`${path}.tmp`)).toBe(false);
+    expect(readdirSync(dir).filter(f => f.endsWith(".tmp"))).toEqual([]);
   });
 });
 

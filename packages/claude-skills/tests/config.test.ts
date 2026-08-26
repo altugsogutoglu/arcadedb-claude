@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveConfig, readEnvFile, writeEnvFile, ensureEnvFile, toClientEnv, DEFAULTS } from "../src/config.js";
@@ -66,6 +66,6 @@ describe("env file", () => {
     const map = readEnvFile(p);
     expect(map).toEqual({ CUSTOM: "1", ARCADEDB_ROOT_PASSWORD: "new", ARCADEDB_HTTP_URI: "http://h:1" });
     expect(statSync(p).mode & 0o777).toBe(0o600);
-    expect(existsSync(p + ".tmp")).toBe(false);
+    expect(readdirSync(dir).filter(f => f.endsWith(".tmp"))).toEqual([]);
   });
 });

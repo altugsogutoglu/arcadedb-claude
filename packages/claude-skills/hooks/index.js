@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 // src/index-runner.ts
-import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, unlinkSync } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, unlinkSync, openSync, writeSync, closeSync, realpathSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join as join10 } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ../agent-memory/dist/src/errors.js
 var ArcadeDBConnectionError = class extends Error {
@@ -1179,7 +1180,7 @@ function loadProjects(path, onError) {
 function writeProjectsFile(projectsPath, map) {
   const dir = dirname2(projectsPath);
   if (!existsSync3(dir)) mkdirSync2(dir, { recursive: true });
-  const tmp = `${projectsPath}.tmp`;
+  const tmp = `${projectsPath}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync2(tmp, JSON.stringify(map, null, 2) + "\n");
   renameSync2(tmp, projectsPath);
 }
@@ -1214,7 +1215,11 @@ function logCapture(event, fields = {}) {
 }
 
 // src/index-runner.ts
-var MAX_FILES = 2e4;
+var DEFAULT_MAX_FILES = 2e4;
+function maxFiles() {
+  const raw = Number(process.env["ARCADEDB_INDEX_MAX_FILES"]);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_FILES;
+}
 function flag(argv, name) {
   const i = argv.indexOf(`--${name}`);
   return i === -1 ? void 0 : argv[i + 1];
@@ -1227,20 +1232,42 @@ function pidAlive(pid) {
     return false;
   }
 }
-function acquireLock(path) {
-  if (existsSync5(path)) {
-    const pid = Number(readFileSync4(path, "utf8").trim());
-    if (Number.isFinite(pid) && pid > 0 && pidAlive(pid)) return false;
+function createLock(path) {
+  let fd;
+  try {
+    fd = openSync(path, "wx");
+  } catch {
+    return false;
   }
-  writeFileSync3(path, String(process.pid));
+  try {
+    writeSync(fd, String(process.pid));
+  } finally {
+    closeSync(fd);
+  }
   return true;
+}
+function acquireLock(path) {
+  if (createLock(path)) return true;
+  let pid = NaN;
+  try {
+    pid = Number(readFileSync4(path, "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (Number.isFinite(pid) && pid > 0 && pidAlive(pid)) return false;
+  try {
+    unlinkSync(path);
+  } catch {
+    return false;
+  }
+  return createLock(path);
 }
 function countTrackedFiles(root) {
   try {
     const out = execSync("git ls-files", { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
     return out.split("\n").filter(Boolean).length;
   } catch {
-    return 0;
+    return null;
   }
 }
 function pruneStale(path, key) {
@@ -1266,7 +1293,11 @@ async function main() {
   const started = Date.now();
   try {
     const files = countTrackedFiles(root);
-    if (files > MAX_FILES) {
+    if (files === null) {
+      logCapture("index_skipped_not_git", { key, root });
+      return 0;
+    }
+    if (files > maxFiles()) {
       logCapture("index_skipped_too_large", { key, files });
       return 0;
     }
@@ -1289,7 +1320,21 @@ async function main() {
     }
   }
 }
-main().then((c) => process.exit(c)).catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return true;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return true;
+  }
+}
+if (isDirectRun()) {
+  main().then((c) => process.exit(c)).catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
+export {
+  acquireLock
+};

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { Client, applySchemas } from "arcadedb-agent-memory";
 import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
+import { acquireLock } from "../src/index-runner.js";
 
 const require = createRequire(import.meta.url);
 const tsxBin = require.resolve("tsx/cli");
@@ -66,10 +67,53 @@ describe("index runner", () => {
     expect(r.code).toBe(0);
     expect(readFileSync(join(home, ".config", "arcadedb", "capture.log"), "utf8")).toContain('"event":"index_done"');
   });
+  it("skips a non-git root without indexing", async () => {
+    const plain = mkdtempSync(join(tmpdir(), "idx-plain-"));
+    writeFileSync(join(plain, "a.ts"), "export const a = 1;\n");
+    try {
+      const r = await run(["--root", plain, "--db", db.name, "--key", "proj"], home);
+      expect(r.code).toBe(0);
+      const log = readFileSync(join(home, ".config", "arcadedb", "capture.log"), "utf8");
+      expect(log).toContain('"event":"index_skipped_not_git"');
+      expect(log).not.toContain('"event":"index_started"');
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+  it("skips a repo over ARCADEDB_INDEX_MAX_FILES", async () => {
+    const child = await new Promise<{ code: number }>(resolve => {
+      const c = spawn(process.execPath, [tsxBin, "src/index-runner.ts", "--root", repo, "--db", db.name, "--key", "proj"], {
+        env: { ...process.env, HOME: home, ARCADEDB_INDEX_MAX_FILES: "1" }, cwd: process.cwd(),
+      });
+      c.on("close", code => resolve({ code: code ?? 0 }));
+    });
+    expect(child.code).toBe(0);
+    const log = readFileSync(join(home, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"event":"index_skipped_too_large"');
+    expect(log).not.toContain('"event":"index_started"');
+    const projects = JSON.parse(readFileSync(join(home, ".config", "arcadedb", "projects.json"), "utf8"));
+    expect(projects.projects.proj.lastIndexed).toBeNull();
+  });
   it("exits 1 and logs index_failed when the server is unreachable", async () => {
     writeFileSync(join(home, ".config", "arcadedb", ".env"), "ARCADEDB_HTTP_URI=http://127.0.0.1:1\nARCADEDB_ROOT_PASSWORD=x\n");
     const r = await run(["--root", repo, "--db", db.name, "--key", "proj"], home);
     expect(r.code).toBe(1);
     expect(readFileSync(join(home, ".config", "arcadedb", "capture.log"), "utf8")).toContain('"event":"index_failed"');
+  });
+});
+
+describe("acquireLock", () => {
+  it("grants the lock once while the holder is alive", () => {
+    const path = join(home, ".config", "arcadedb", "index-unit.lock");
+    expect(acquireLock(path)).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(String(process.pid));
+    expect(acquireLock(path)).toBe(false);
+  });
+
+  it("takes over a lock left by a dead pid", () => {
+    const path = join(home, ".config", "arcadedb", "index-unit-dead.lock");
+    writeFileSync(path, "999999");
+    expect(acquireLock(path)).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(String(process.pid));
   });
 });

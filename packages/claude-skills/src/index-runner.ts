@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync, realpathSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "arcadedb-agent-memory";
 import { indexRepo } from "arcadedb-code-indexer";
 import { configDir, projectsJsonPath } from "./env-paths.js";
@@ -10,7 +11,12 @@ import { updateProject } from "./auto-register.js";
 import { stalePath } from "./index-need.js";
 import { logCapture } from "./capture-log.js";
 
-const MAX_FILES = 20000;
+const DEFAULT_MAX_FILES = 20000;
+
+function maxFiles(): number {
+  const raw = Number(process.env["ARCADEDB_INDEX_MAX_FILES"]);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_FILES;
+}
 
 function flag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -21,21 +27,47 @@ function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-function acquireLock(path: string): boolean {
-  if (existsSync(path)) {
-    const pid = Number(readFileSync(path, "utf8").trim());
-    if (Number.isFinite(pid) && pid > 0 && pidAlive(pid)) return false;
+function createLock(path: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(path, "wx");
+  } catch {
+    return false;
   }
-  writeFileSync(path, String(process.pid));
+  try {
+    writeSync(fd, String(process.pid));
+  } finally {
+    closeSync(fd);
+  }
   return true;
 }
 
-function countTrackedFiles(root: string): number {
+/** Exclusive create, so two runners racing on the same key cannot both win. */
+export function acquireLock(path: string): boolean {
+  if (createLock(path)) return true;
+  // Lock exists: only a dead holder may be cleared, and only once.
+  let pid = NaN;
+  try {
+    pid = Number(readFileSync(path, "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (Number.isFinite(pid) && pid > 0 && pidAlive(pid)) return false;
+  try {
+    unlinkSync(path);
+  } catch {
+    return false;
+  }
+  return createLock(path);
+}
+
+/** null when `git ls-files` fails: the size guard must fail closed rather than assume 0. */
+function countTrackedFiles(root: string): number | null {
   try {
     const out = execSync("git ls-files", { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
     return out.split("\n").filter(Boolean).length;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -63,7 +95,11 @@ async function main(): Promise<number> {
   const started = Date.now();
   try {
     const files = countTrackedFiles(root);
-    if (files > MAX_FILES) {
+    if (files === null) {
+      logCapture("index_skipped_not_git", { key, root });
+      return 0;
+    }
+    if (files > maxFiles()) {
       logCapture("index_skipped_too_large", { key, files });
       return 0;
     }
@@ -84,4 +120,17 @@ async function main(): Promise<number> {
   }
 }
 
-main().then(c => process.exit(c)).catch(e => { console.error(e); process.exit(1); });
+/** True unless this module was imported (by a test); a misfire must favour running. */
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return true;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return true;
+  }
+}
+
+if (isDirectRun()) {
+  main().then(c => process.exit(c)).catch(e => { console.error(e); process.exit(1); });
+}

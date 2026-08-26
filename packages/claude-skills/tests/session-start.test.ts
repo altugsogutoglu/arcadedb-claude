@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync, readFileSync, realpathSync, readdirSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -402,7 +402,7 @@ describe("session-start hook - auto-registration", () => {
       expect(code).toBe(0);
       expect(stdout).not.toMatch(/Project:/);
       expect(readFileSync(projectsPath, "utf8")).toBe(before);
-      expect(existsSync(`${projectsPath}.tmp`)).toBe(false);
+      expect(readdirSync(join(tmpHome, ".config", "arcadedb")).filter(f => f.endsWith(".tmp"))).toEqual([]);
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }

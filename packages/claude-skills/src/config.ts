@@ -56,7 +56,7 @@ export function writeEnvFile(values: Record<string, string>, path: string = envF
   const merged = { ...readEnvFile(path), ...values };
   const body = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
   if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, body, { mode: 0o600 });
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);

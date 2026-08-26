@@ -67,7 +67,8 @@ export interface RegisterResult {
 export function writeProjectsFile(projectsPath: string, map: ProjectsMap): void {
   const dir = dirname(projectsPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmp = `${projectsPath}.tmp`;
+  // Unique per writer: concurrent hooks must not share one tmp path and clobber each other.
+  const tmp = `${projectsPath}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n");
   renameSync(tmp, projectsPath);
 }

@@ -452,7 +452,7 @@ function writeEnvFile(values, path = envFilePath()) {
   const merged = { ...readEnvFile(path), ...values };
   const body = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
   if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, body, { mode: 384 });
   chmodSync(tmp, 384);
   renameSync(tmp, path);
@@ -634,7 +634,7 @@ var RegistrationError = class extends Error {
 function writeProjectsFile(projectsPath, map) {
   const dir = dirname2(projectsPath);
   if (!existsSync3(dir)) mkdirSync2(dir, { recursive: true });
-  const tmp = `${projectsPath}.tmp`;
+  const tmp = `${projectsPath}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync2(tmp, JSON.stringify(map, null, 2) + "\n");
   renameSync2(tmp, projectsPath);
 }
@@ -796,7 +796,7 @@ function decideIndexNeed(entry, key, path, autoIndex) {
 
 // src/index-spawn.ts
 import { spawn } from "node:child_process";
-import { openSync } from "node:fs";
+import { closeSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname4, join as join6 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -812,8 +812,9 @@ function spawnIndexer(args) {
     const log = openSync(join6(configDir(), `index-${args.key}.log`), "a");
     const argv = runner.endsWith(".ts") ? [createRequire(import.meta.url).resolve("tsx/cli"), runner] : [runner];
     argv.push("--root", args.root, "--db", args.db, "--key", args.key);
-    if (args.stack.length) argv.push("--stack", args.stack.join(","));
+    if (args.stack?.length) argv.push("--stack", args.stack.join(","));
     const child = spawn(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
+    closeSync(log);
     child.unref();
     return child.pid ?? null;
   } catch {
