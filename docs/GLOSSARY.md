@@ -10,4 +10,4 @@ Domain terminology for arcadedb-claude. One line per term. Add when a word gets 
 - **Live / dryrun / off**: ARCADEDB_EXTRACTOR modes. dryrun writes JSONL only.
 - **Hybrid memory**: vector (recall by meaning) + graph (recall by relationship) in one ArcadeDB store. See ADR-0001.
 - **Indexer**: arcadedb-code-indexer. Walks a repo, writes code structure into project DB.
-- **projects.json**: registry mapping local repo paths to project DB names (~/.config/arcadedb/).
+- **projects.json**: registry mapping local repo paths to project DB names (~/.config/arcadedb/). Entries are auto-created on SessionStart inside a git repo (0.6.2+).

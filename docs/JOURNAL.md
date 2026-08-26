@@ -5,6 +5,35 @@ entries; write new ADRs in `decisions/` to supersede past decisions.
 
 ---
 
+## 2026-08-27 - Session: Auto-register projects
+
+**Topic:** Removed the manual registration step that gated capture on every new repo.
+
+**Found:**
+- `session-start.ts` only created a `:Session` and state file when `findProject()`
+  matched an entry in projects.json. Every unregistered repo logged `skip no_state`
+  from the Stop hook and captured nothing.
+- Registration lived only in `/arcadedb-init` Step 2, a manual per-project flow.
+
+**Built:**
+- `src/auto-register.ts`: `deriveProjectIdentity` (git remote name, else cwd
+  basename; db name sanitized and `p_`-prefixed when it starts with a digit),
+  `detectStack` by marker files, `registerProject` (additive, never overwrites),
+  `isGitRepo`.
+- `session-start.ts` registers on a `findProject()` miss inside a git repo, applies
+  core+code schemas (creating the DB), then proceeds as a registered project. Banner
+  says `auto-registered, not indexed yet, run /graph-index to index code`.
+  Non-git dirs keep memory-only. Failures fall back to memory-only and log
+  `project_register_failed`.
+- `/arcadedb-init` reduced to .env, projects.json, claude_memory, optional index.
+- Released as 0.6.2.
+
+**Next:**
+- Prove real-session capture in a freshly auto-registered repo.
+- Vector layer (ADR-0001).
+
+---
+
 ## 2026-08-26 - Session: Shipped S1 capture fix (0.6.1)
 
 **Topic:** Implemented and released the S1 capture-fix plan. Found the real root

@@ -1,6 +1,6 @@
 # Project State
 
-**Last updated:** 2026-08-26
+**Last updated:** 2026-08-27
 **Phase:** 1 - Revive + go hybrid
 **Branch:** main
 
@@ -13,6 +13,8 @@ Intended long-term as an alternative to claude-mem's vector-only model.
 
 ## Ground truth (verified 2026-06-17, with reproduction; fix shipped 2026-08-26)
 
+- **0.6.2: projects auto-register.** An unregistered git repo registers itself on
+  SessionStart and gets its DB created, so capture no longer needs `/arcadedb-init`.
 - **Capture fixed in 0.6.1 (root cause: CLAUDE_SESSION_ID never set for hooks).
   Proof pending: first real session write.** Hooks keyed all session state on the
   `CLAUDE_SESSION_ID` env var, which Claude Code never sets for hooks. Every state

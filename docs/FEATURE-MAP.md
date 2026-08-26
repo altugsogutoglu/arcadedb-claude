@@ -5,7 +5,8 @@ Inventory of shipped and planned features. Status: shipped | partial | planned |
 | Feature | Package | Status | Notes |
 |---|---|---|---|
 | SessionStart context banner | claude-skills | shipped | schema, counts, extractor status |
-| /arcadedb-init | claude-skills | shipped | writes .env, registers project |
+| /arcadedb-init | claude-skills | shipped | writes .env, projects.json, claude_memory |
+| Auto-register project on SessionStart | claude-skills | shipped 0.6.2 | git repos only |
 | /graph-index | claude-skills | shipped | shells to arcadedb-index |
 | /graph-query (NL to Cypher) | claude-skills | shipped | |
 | /graph-decision | claude-skills | shipped | |

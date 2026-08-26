@@ -9,6 +9,12 @@ Keep a Changelog style. Newest on top. Per-package versions live in packages/*/p
 
 ### Fixed
 
+## arcadedb-claude-skills 0.6.2 - 2026-08-27
+### Added
+- Auto-registration on SessionStart: an unregistered git repo registers itself in projects.json, its DB is created with core+code schemas, and capture starts immediately.
+### Changed
+- /arcadedb-init no longer registers projects; it only sets up .env, projects.json, and claude_memory.
+
 ## arcadedb-claude-skills 0.6.1 - 2026-08-26
 ### Fixed
 - Capture never fired: hooks keyed session state on CLAUDE_SESSION_ID (never set). Now read session_id from hook stdin.
