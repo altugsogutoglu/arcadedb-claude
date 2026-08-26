@@ -5,9 +5,11 @@ import { Client, loadEnv, endSession } from "arcadedb-agent-memory";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { loadProjects } from "./project-map.js";
 import { readSessionState } from "./session-state.js";
+import { readHookInput } from "./hook-input.js";
 
 async function main(): Promise<void> {
-  const claudeCodeSessionId = process.env["CLAUDE_SESSION_ID"];
+  const input = readHookInput();
+  const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"];
   if (!claudeCodeSessionId) return;
 
   const state = readSessionState(claudeCodeSessionId);

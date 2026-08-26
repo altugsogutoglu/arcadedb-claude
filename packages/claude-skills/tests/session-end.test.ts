@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +11,28 @@ import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
 const require = createRequire(import.meta.url);
 const tsxBin = require.resolve("tsx/cli");
 
-const exec = promisify(execFile);
+// promisify(execFile) leaves the child's stdin pipe open by default; since the hook now
+// synchronously reads stdin (readFileSync(0)) via readHookInput(), an unclosed stdin hangs
+// the child forever. Close it immediately so callers that don't need to send input still work.
+const execFileP = promisify(execFile);
+function exec(...args: Parameters<typeof execFileP>): ReturnType<typeof execFileP> {
+  const result = execFileP(...args);
+  result.child.stdin?.end();
+  return result;
+}
+
+function runWithStdin(script: string, stdin: string, env: Record<string, string>): Promise<{ stdout: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [tsxBin, script], { env: { ...process.env, ...env }, cwd: process.cwd() });
+    let stdout = "";
+    child.stdout.on("data", d => { stdout += d.toString(); });
+    child.on("close", code => resolve({ stdout, code: code ?? 0 }));
+    child.on("error", reject);
+    child.stdin.write(stdin);
+    child.stdin.end();
+  });
+}
+
 const client = new Client(env);
 
 let memoryDb: TempDb;
@@ -63,6 +84,29 @@ describe("session-end hook", () => {
       cwd: process.cwd(),
     });
 
+    const rows = await client.query<{ "s.endedAt": string | null }>(
+      memoryDb.name, "cypher",
+      `MATCH (s:Session {id: '${sessionDbId}'}) RETURN s.endedAt`,
+    );
+    expect(rows[0]?.["s.endedAt"]).toBeTruthy();
+  });
+
+  it("ends the :Session named by stdin session_id", async () => {
+    const sessionDbId = await startSession(client, memoryDb.name, { repo: "project-a" });
+    writeFileSync(
+      join(tmpHome, ".config", "arcadedb", "sessions", "stdin-end-1.json"),
+      JSON.stringify({
+        claudeCodeSessionId: "stdin-end-1", sessionDbId, repo: "project-a", cwd: "/x", userName: "u",
+        startedAt: new Date().toISOString(), currentTurnIdx: 0, lastExtractedTurnIdx: 0,
+        lastExtractedAt: new Date().toISOString(), currentLine: 0, lastExtractedLine: 0,
+      }),
+    );
+    const { code } = await runWithStdin(
+      "src/session-end.ts",
+      JSON.stringify({ session_id: "stdin-end-1", hook_event_name: "SessionEnd", reason: "exit" }),
+      { HOME: tmpHome },
+    );
+    expect(code).toBe(0);
     const rows = await client.query<{ "s.endedAt": string | null }>(
       memoryDb.name, "cypher",
       `MATCH (s:Session {id: '${sessionDbId}'}) RETURN s.endedAt`,
