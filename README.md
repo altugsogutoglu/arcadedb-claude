@@ -22,7 +22,7 @@ What's needed is a **persistent graph** the agent can query before answering —
 
 | Component | What it does |
 |---|---|
-| Plugin (hooks + commands) | Auto-injects per-project graph context on every session start. Slash commands for recording decisions, querying the graph, indexing, and status |
+| Plugin (hooks + commands) | Auto-injects per-project graph context on every session start. Captures every prompt and answer as a `:Turn`, links the files, symbols, commits and tickets they mention, summarises ended sessions, and answers "what did we do / decide / believe" through hybrid search. Slash commands for recording decisions, querying the graph, indexing, and status |
 | `src/agent-memory` + `arcadedb-memory` CLI | Graph schemas (`:Decision`, `:Insight`, `:Session`, `:Question`, `:Answer`), thin HTTP client, memory helpers |
 | `src/code-indexer` + `arcadedb-index` CLI | Walks a codebase (TypeScript / JavaScript / PHP / Java today) and writes its structure (`:Repo`, `:Module`, `:File`, `:CONTAINS`, `:IMPORTS`) into a project-scoped ArcadeDB database |
 | `src/obsidian-sync` + `obsidian-sync` CLI | Syncs an Obsidian vault into ArcadeDB as `:Note` nodes connected by `[[wikilink]]` edges, so your second brain becomes a graph the agent can traverse |
@@ -47,6 +47,30 @@ What's needed is a **persistent graph** the agent can query before answering —
 ```
 
 One ArcadeDB server. Multiple isolated graph databases (one per project plus a shared memory DB). One Claude Code plugin that picks the right one based on your working directory.
+
+## Memory that costs nothing to keep
+
+Since 0.9 the plugin is a memory system, not just a code graph. Each layer is cheap, local, and optional (0.9 to 0.12, all shipped 2026-08-27):
+
+| Layer | What | Cost |
+|---|---|---|
+| **Capture** | Every prompt and answer becomes a `:Turn` on the Stop hook, one Turn per answer even when tool calls split it, tagged with repo and session. Tool output and thinking are not stored. | none |
+| **Refs** | Regex pass on each Turn: file paths, PascalCase symbols, commit SHAs, ticket ids, URLs become global `:Ref` nodes, `Turn-[:MENTIONS]->Ref`. The same class name links turns across repos. | none |
+| **Embeddings** | `all-MiniLM-L6-v2` through transformers.js, 384 dims, runtime auto-installed once (~260 MB), filled by a detached runner after each turn. | none |
+| **Hybrid search** | Vector + ArcadeDB `FULL_TEXT` (Lucene) + exact `:Ref` match + query-time personalized PageRank over the 2-hop neighbourhood of the hits, fused with reciprocal rank fusion. Turn hits carry the turns before/after and related turns from other sessions and repos. Exact identifiers (`ef71e31d`, `config/heisterkamp.php`, `BACKLOG:69`) rank first. | none |
+| **Bi-temporal decisions** | `:Decision` has `validFrom`/`validTo`/`expiredAt`/`supersededBy`. `SUPERSEDES` closes the old window, nothing is deleted. Search hides superseded decisions; `--as-of 2026-07-01` shows what was believed then. | none |
+| **Rollups** | A detached runner summarises each ended session with one lean `claude -p` call on haiku (settings, tools, MCP and hooks off): title, **Outcome / Changed / Decided / Open**, up to five decisions, supersession verdicts against prior decisions. One call per repo-week writes a `:Digest`. Both are searchable. | cents per session, off with `ARCADEDB_ROLLUP=off` |
+| **LLM extractor** | Opt-in subagent that distils triples every 10 turns. | tokens per run, off by default |
+
+```bash
+arcadedb-skills search "why did we drop the test api default" --repo transprt.net
+arcadedb-skills search "HeisterkampClient" --types Turn,Decision --as-of 2026-07-01
+arcadedb-skills refs config/heisterkamp.php          # every turn naming that file, any repo
+arcadedb-skills decisions list --all                 # with closed validity windows
+arcadedb-skills rollup status | run | show <id>      # session summaries and weekly digests
+```
+
+Everything is plain Cypher/SQL underneath, so `/graph-query` and your own tools can read it too.
 
 ## Why ArcadeDB
 
@@ -167,13 +191,16 @@ ARCADEDB_MEMORY_DB=claude_memory
 ARCADEDB_AUTO_INDEX=on
 ARCADEDB_CAPTURE=on
 ARCADEDB_EMBED=on
+ARCADEDB_ROLLUP=on
+ARCADEDB_ROLLUP_MODEL=haiku
+ARCADEDB_ROLLUP_TRANSPORT=claude
 ARCADEDB_EXTRACTOR=off
 ```
 
 - `ARCADEDB_AUTO_INDEX` (default `on`): whether new or stale projects are indexed automatically in the background. Set to `off` (or `/arcadedb-config set auto-index off`) to index only via `/graph-index` or `/arcadedb-config index`.
 - `ARCADEDB_CAPTURE` (default `on`): every prompt and answer is stored as a `:Turn` node on the Stop hook (one Turn per answer, even when tool calls split it). No LLM, no cost.
 - `ARCADEDB_EMBED` (default `on`): local `all-MiniLM-L6-v2` embeddings for `:Turn` and memory notes, runtime auto-installed into `~/.config/arcadedb/embed/` (~260 MB, once). `arcadedb-skills search "<query>"` fuses vector, full-text, `:Ref` lookup (files, symbols, commits, tickets extracted from every turn without a model) and a query-time personalized PageRank over the memory graph, then expands hits with session context and related turns from other repos.
-- `ARCADEDB_ROLLUP` (default `on`): one small `claude -p` call (haiku, cents per session) per ended session writes a title, summary, new decisions and supersession verdicts; one per repo-week writes a `:Digest`. Decisions are bi-temporal (`validFrom`/`validTo`); `search --as-of <date>` is a point-in-time view.
+- `ARCADEDB_ROLLUP` (default `on`): one small `claude -p` call (haiku, cents per session) per ended session writes a title, summary, new decisions and supersession verdicts; one per repo-week writes a `:Digest`. Decisions are bi-temporal (`validFrom`/`validTo`); `search --as-of <date>` is a point-in-time view. `ARCADEDB_ROLLUP_MODEL` picks the model, `ARCADEDB_ROLLUP_TRANSPORT=api` uses `ANTHROPIC_API_KEY` instead of your Claude Code login. Every hook exits at once when `ARCADEDB_HOOKS=off`, which is how the rollup subprocess never re-enters the plugin.
 - `ARCADEDB_EXTRACTOR` (default `off`): opt-in LLM subagent that distils decisions/insights/Q&A into graph triples every 10 turns. `live` or `dryrun`. Costs tokens per run.
 - `ARCADEDB_INDEX_MAX_FILES` (default `20000`): skips indexing a repo larger than this file count rather than blocking the session.
 - Passwords passed to `/arcadedb-config set password <value>` go through the shell, so a value containing leading or trailing spaces, quotes, `$`, or backticks will not arrive intact. Edit `~/.config/arcadedb/.env` directly for such a password.
