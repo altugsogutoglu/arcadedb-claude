@@ -7,7 +7,7 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
@@ -30,3 +30,17 @@ jobs:
 
       - run: npm publish --provenance --access public
         working-directory: packages/claude-skills
+
+      # GitHub release with this version's CHANGELOG section as notes (tag pushes only)
+      - if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            $0 ~ "^## arcadedb-claude-skills " v " " { on=1; next }
+            on && /^## / { exit }
+            on { print }
+          ' docs/CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See docs/CHANGELOG.md" > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "arcadedb-claude-skills v$VERSION" --notes-file notes.md
