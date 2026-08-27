@@ -1,6 +1,6 @@
 {
   "name": "arcadedb-code-indexer",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Walks a code repo and writes its structure (modules, files, imports) into an ArcadeDB graph. Part of the arcadedb-claude suite.",
   "license": "MIT",
   "type": "module",

@@ -1,7 +1,7 @@
 # Project State
 
 **Last updated:** 2026-08-27
-**Phase:** 1 - Revive + go hybrid
+**Phase:** 1 - plug-and-play shipped (0.7.0); S2 embed next
 **Branch:** main
 
 ## What this project is
@@ -13,6 +13,19 @@ Intended long-term as an alternative to claude-mem's vector-only model.
 
 ## Ground truth (verified 2026-06-17, with reproduction; fix shipped 2026-08-26)
 
+- **0.7.0: plug-and-play. Only manual step is the password.** Everything else is
+  automatic: `.env` is created with defaults on first SessionStart (shell env
+  overrides `.env`, which overrides defaults); the server is probed on every
+  SessionStart with exact banners for unreachable / no password / unauthorized;
+  `claude_memory` schemas are ensured before the session proceeds; a git repo
+  auto-registers on first SessionStart; background code indexing runs on first
+  registration and again whenever `stale.log` shows edits since the last index
+  (20k tracked-file guard, per-project lock); capture runs on the Stop hook as
+  before. The plugin never starts or manages ArcadeDB itself - the server is a
+  hard requirement, set up once by the user, then `/arcadedb-config set
+  password` is the only manual step. Real-session proof for 0.7.0 (banners,
+  auto-register, background index spawn/done, capture.log events) is pending -
+  see BACKLOG/JOURNAL.
 - **0.6.2: projects auto-register.** An unregistered git repo registers itself on
   SessionStart and gets its DB created, so capture no longer needs `/arcadedb-init`.
 - **Capture fixed in 0.6.1 (root cause: CLAUDE_SESSION_ID never set for hooks).

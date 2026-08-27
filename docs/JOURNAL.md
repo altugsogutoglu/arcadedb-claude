@@ -5,6 +5,44 @@ entries; write new ADRs in `decisions/` to supersede past decisions.
 
 ---
 
+## 2026-08-27 - Session: Plug-and-play (0.7.0)
+
+**Topic:** Removed every remaining manual setup step so a fresh repo works with
+zero configuration beyond the ArcadeDB password.
+
+**Built:**
+- `src/config.ts`: env > .env > defaults precedence, atomic `.env` writer.
+- `src/server-probe.ts`: ready + auth probe, exact banner lines for
+  unreachable / no password / unauthorized.
+- SessionStart bootstrap: ensures `.env`, probes the server, applies
+  `claude_memory` schemas, short-circuits on failure.
+- `src/index-need.ts` + `updateProject`/`removeProject`: decides when a
+  project needs (re)indexing from `stale.log`.
+- `hooks/index.js`: background indexer with an atomic pid lock, a 20k
+  tracked-file guard (`ARCADEDB_INDEX_MAX_FILES`), fail-closed on non-git,
+  `stale.log` pruning, `capture.log` events.
+- `src/index-spawn.ts`, `config show|set|test|forget|index` CLI,
+  `/arcadedb-config` command (replaces `/arcadedb-init`), `/graph-index`
+  alias, `/graph-status` via `config show`.
+- README rewrites, root build order fix, code-indexer `main`/`types` fix
+  (0.4.2: pointed at a nonexistent `dist/index.js`).
+
+**Decided:**
+- ArcadeDB is a hard requirement; the plugin never starts or manages it.
+- The password is the only manual step (`/arcadedb-config set password`).
+- `/arcadedb-init` is removed in favour of `/arcadedb-config`.
+- `$ARGUMENTS` must appear bare (unquoted) in command files for Claude Code
+  to substitute it.
+
+**Next:**
+- Push main, tag `v0.7.0-plugin` and `v0.4.2-code-indexer`.
+- Real-session proof: unregistered repo shows the server banner and
+  auto-register + background-index-in-progress on session 1, file/import
+  counts on session 2.
+- S2 embed module.
+
+---
+
 ## 2026-08-27 - Session: Auto-register projects
 
 **Topic:** Removed the manual registration step that gated capture on every new repo.

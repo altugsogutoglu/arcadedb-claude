@@ -59,3 +59,5 @@ Full design: `docs/superpowers/specs/2026-06-17-hybrid-vector-memory-design.md`
   the env mode (banner currently says `live` regardless of health).
   - First identified: 2026-08-26.
 - **Stop-hook backoff when parent never dispatches the extractor**: today `delta >= turns` re-blocks every turn until extract-write marks state. Record `lastTriggeredTurnIdx` on trigger and require another `turns` before re-blocking. Why deferred: needs a state field + rate-limit change; capture.log (`trigger` without `write`) makes it diagnosable meanwhile. First identified: 2026-08-26.
+- **Index size guard tuning (20k files)**: the background indexer skips repos over 20k tracked files. Revisit the threshold once platform / transprt.net give real numbers. First identified: 2026-08-27.
+- **Index retry backoff after index_failed**: today a failed background index leaves `lastIndexed` null, so the next session retries immediately. Should retry at most once per day (`lastIndexAttempt`). First identified: 2026-08-27.

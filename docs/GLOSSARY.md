@@ -10,4 +10,7 @@ Domain terminology for arcadedb-claude. One line per term. Add when a word gets 
 - **Live / dryrun / off**: ARCADEDB_EXTRACTOR modes. dryrun writes JSONL only.
 - **Hybrid memory**: vector (recall by meaning) + graph (recall by relationship) in one ArcadeDB store. See ADR-0001.
 - **Indexer**: arcadedb-code-indexer. Walks a repo, writes code structure into project DB.
-- **projects.json**: registry mapping local repo paths to project DB names (~/.config/arcadedb/). Entries are auto-created on SessionStart inside a git repo (0.6.2+).
+- **projects.json**: registry mapping local repo paths to project DB names (~/.config/arcadedb/). Entries are auto-created on SessionStart inside a git repo (0.6.2+); each entry tracks indexing state as of 0.7.0.
+- **capture.log**: ~/.config/arcadedb/capture.log. JSONL of every extractor trigger, skip, write, and failure.
+- **stale.log**: per-project log of edits since the last index run. Read by the background indexer to decide if a re-index is due.
+- **/arcadedb-config**: slash command with subcommands show, set, test, forget, index. Replaces /arcadedb-init (0.7.0).

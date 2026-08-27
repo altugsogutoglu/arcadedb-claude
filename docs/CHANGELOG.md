@@ -9,6 +9,20 @@ Keep a Changelog style. Newest on top. Per-package versions live in packages/*/p
 
 ### Fixed
 
+## arcadedb-claude-skills 0.7.0 - 2026-08-27
+### Added
+- Zero-config bootstrap on SessionStart: .env created with defaults, server probed, claude_memory schemas ensured.
+- Background code indexing (hooks/index.js) on first registration and whenever stale.log shows edits. 20k tracked-file guard, per-project lock.
+- /arcadedb-config: show, set (server, user, password, memory-db, auto-index), test, forget, index.
+- Exact banner lines for unreachable / no password / unauthorized servers.
+### Changed
+- /arcadedb-init removed. /graph-index is an alias for /arcadedb-config index. /graph-status uses the bundled cli.
+- Settings precedence: shell ARCADEDB_* > ~/.config/arcadedb/.env > defaults.
+
+## arcadedb-code-indexer 0.4.2 - 2026-08-27
+### Fixed
+- package main/types pointed at dist/index.js which does not exist; now dist/src/index.js. Library imports of arcadedb-code-indexer work again.
+
 ## arcadedb-claude-skills 0.6.2 - 2026-08-27
 ### Added
 - Auto-registration on SessionStart: an unregistered git repo registers itself in projects.json, its DB is created with core+code schemas, and capture starts immediately.
