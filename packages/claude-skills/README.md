@@ -90,6 +90,8 @@ arcadedb-skills extract-replay <sessionDbId> [--repo X]          # re-write an a
 
 Without the embedding runtime, `search` runs text + ref only and says so on stderr.
 
+> **ArcadeDB compatibility.** Full-text search needs ArcadeDB's `FULL_TEXT` index. On 26.6.x-26.7.2 an index created over an already populated type matches nothing and `REBUILD INDEX` drops it ([#4732](https://github.com/ArcadeData/arcadedb/issues/4732), [#5791](https://github.com/ArcadeData/arcadedb/issues/5791), fixed by [#5925](https://github.com/ArcadeData/arcadedb/pull/5925)). The plugin works around it by rewriting existing rows once at schema time (`search reindex` does it on demand), so any 26.x server works; a fixed server just skips the extra writes.
+
 ### Session rollup and weekly digests (on by default, one small model call each)
 
 When a session ends, a detached runner summarises it with one `claude -p` call on `haiku` (settings, tools, MCP and hooks off: ~250 tokens of overhead; a typical 10-turn session costs $0.01-0.03, long transcripts are clipped to 24k characters): a title, a markdown summary (**Outcome / Changed / Decided / Open**), up to five durable decisions, and a verdict on which earlier decisions of that repo the session replaced. Once a week per repo is complete, one more call writes a `:Digest` over that week's session summaries. Both are embedded and full-text indexed, so `search` returns them as `Summary` and `Digest` next to raw turns. This is the GraphRAG "community summary" idea done incrementally: never a recompute over the whole graph, cost proportional to what you actually did.

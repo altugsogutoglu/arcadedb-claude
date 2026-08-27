@@ -26,7 +26,7 @@ Keep a Changelog style. Newest on top. Since 0.8.0 there is one package: package
 - `search reindex`: one-off full-text re-index of existing rows.
 
 ### Fixed
-- ArcadeDB builds a FULL_TEXT index over existing rows as a no-op (and `REBUILD INDEX` crashes on it). `applySchemas` now rewrites existing rows once when it creates such an index, so old turns are searchable.
+- ArcadeDB 26.6.x-26.7.2 builds a FULL_TEXT index over existing rows as a no-op, and `REBUILD INDEX` crashes and drops the index ([ArcadeData/arcadedb#4732](https://github.com/ArcadeData/arcadedb/issues/4732), follow-up [#5791](https://github.com/ArcadeData/arcadedb/issues/5791), fixed after 26.8.1 by [#5925](https://github.com/ArcadeData/arcadedb/pull/5925)). `applySchemas` rewrites existing rows once when it creates such an index, so old turns are searchable on any server version; on a fixed server the rewrite is a harmless no-op.
 
 ## arcadedb-claude-skills 0.9.1 - 2026-08-27
 

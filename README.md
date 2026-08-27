@@ -66,6 +66,16 @@ Apache 2.0 matters because this code goes into your business workflows. GPL-lice
 
 If those concerns don't bind for you, the architecture in this repo is intentionally portable. The HTTP client in `src/agent-memory/client.ts` is ~50 lines and could be swapped for any other Cypher-speaking backend.
 
+### Compatibility
+
+| Component | Tested with |
+|---|---|
+| ArcadeDB | 26.6.1 (Docker `arcadedata/arcadedb`), 26.8.x |
+| Claude Code | 2.1.x (hooks: SessionStart, PostToolUse, Stop, SessionEnd) |
+| Node | 20, 22 |
+
+Known upstream issue, worked around in the plugin: on ArcadeDB 26.6.x-26.7.2 a `FULL_TEXT` index created over existing rows matches nothing and `REBUILD INDEX` drops it ([ArcadeData/arcadedb#4732](https://github.com/ArcadeData/arcadedb/issues/4732), [#5791](https://github.com/ArcadeData/arcadedb/issues/5791), fixed by [#5925](https://github.com/ArcadeData/arcadedb/pull/5925)). The plugin rewrites existing rows once when it creates the index, so hybrid search works on every 26.x server.
+
 ## Getting started
 
 Three steps total. End-to-end in under five minutes on a fresh machine.
