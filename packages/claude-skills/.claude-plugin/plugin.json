@@ -1,6 +1,6 @@
 {
   "name": "arcadedb-claude-skills",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Auto-inject ArcadeDB graph context per project; slash commands for decisions, queries, indexing, and status. Pre-bundled hooks, zero runtime npm deps.",
   "author": {
     "name": "Altug Sogutoglu",

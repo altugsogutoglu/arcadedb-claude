@@ -2102,13 +2102,17 @@ async function closeAbandonedSessions(deps) {
   const rows = await deps.client.query(
     deps.db,
     "sql",
-    `SELECT id, (SELECT max(ts) FROM Turn WHERE sessionId = $parent.$current.id) AS last FROM Session
-     WHERE endedAt IS NULL AND startedAt < ${sqlStr3(iso(cutoff))}`
-  ).catch(() => []);
+    `SELECT id FROM Session WHERE endedAt IS NULL AND startedAt < ${sqlStr3(iso(cutoff))}`
+  );
   let closed = 0;
   for (const r of rows) {
-    const endedAt = r.last ?? iso(cutoff);
-    await deps.client.execute(deps.db, "sql", `UPDATE Session SET endedAt = ${sqlStr3(String(endedAt).replace(" ", "T"))} WHERE id = ${sqlStr3(r.id)}`);
+    const last = await deps.client.query(
+      deps.db,
+      "sql",
+      `SELECT max(ts) AS last FROM Turn WHERE sessionId = ${sqlStr3(r.id)}`
+    );
+    const endedAt = typeof last[0]?.last === "string" && last[0].last ? last[0].last.replace(" ", "T") : iso(cutoff);
+    await deps.client.execute(deps.db, "sql", `UPDATE Session SET endedAt = ${sqlStr3(endedAt)} WHERE id = ${sqlStr3(r.id)}`);
     closed += 1;
   }
   return closed;

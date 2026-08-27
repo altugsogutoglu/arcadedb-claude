@@ -4,6 +4,11 @@ Keep a Changelog style. Newest on top. Since 0.8.0 there is one package: package
 
 ## [Unreleased]
 
+## arcadedb-claude-skills 0.12.1 - 2026-08-27
+
+### Fixed
+- Abandoned-session close in the rollup runner used a correlated subquery that returns a nested row on ArcadeDB 26.9.x, leaving `endedAt` unset; replaced by a plain per-session `max(ts)` query. Verified against 26.6.1 and 26.9.1.
+
 ## arcadedb-claude-skills 0.12.0 - 2026-08-27
 
 ### Added

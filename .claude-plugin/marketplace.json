@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "ArcadeDB-powered graph intelligence for Claude Code: auto-inject project context, decision memory, code indexing, Obsidian sync.",
-    "version": "0.12.0"
+    "version": "0.12.1"
   },
   "plugins": [
     {
       "name": "arcadedb-claude-skills",
       "source": "./packages/claude-skills",
       "description": "Auto-inject ArcadeDB graph context per project; slash commands for decisions, queries, indexing, and status. Pre-bundled hooks, no npm install required.",
-      "version": "0.12.0",
+      "version": "0.12.1",
       "strict": true
     }
   ]

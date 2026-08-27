@@ -70,11 +70,11 @@ If those concerns don't bind for you, the architecture in this repo is intention
 
 | Component | Tested with |
 |---|---|
-| ArcadeDB | 26.6.1 (Docker `arcadedata/arcadedb`), 26.8.x |
+| ArcadeDB | 26.6.1 and 26.9.1 (Docker `arcadedata/arcadedb`) |
 | Claude Code | 2.1.x (hooks: SessionStart, PostToolUse, Stop, SessionEnd) |
 | Node | 20, 22 |
 
-Known upstream issue, worked around in the plugin: on ArcadeDB 26.6.x-26.7.2 a `FULL_TEXT` index created over existing rows matches nothing and `REBUILD INDEX` drops it ([ArcadeData/arcadedb#4732](https://github.com/ArcadeData/arcadedb/issues/4732), [#5791](https://github.com/ArcadeData/arcadedb/issues/5791), fixed by [#5925](https://github.com/ArcadeData/arcadedb/pull/5925)). The plugin rewrites existing rows once when it creates the index, so hybrid search works on every 26.x server.
+Known upstream issue, worked around in the plugin: on ArcadeDB 26.6.x-26.7.2 a `FULL_TEXT` index created over existing rows matches nothing and `REBUILD INDEX` drops it ([ArcadeData/arcadedb#4732](https://github.com/ArcadeData/arcadedb/issues/4732), [#5791](https://github.com/ArcadeData/arcadedb/issues/5791), fixed by [#5925](https://github.com/ArcadeData/arcadedb/pull/5925)). The plugin rewrites existing rows once when it creates the index, so hybrid search works on every 26.x server; from 26.9.1 the server itself is correct.
 
 ## Getting started
 

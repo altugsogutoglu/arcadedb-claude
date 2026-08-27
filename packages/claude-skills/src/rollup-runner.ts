@@ -56,13 +56,15 @@ function iso(d: Date): string {
 export async function closeAbandonedSessions(deps: RollupDeps): Promise<number> {
   const now = (deps.now ?? (() => new Date()))();
   const cutoff = new Date(now.getTime() - ABANDON_AFTER_MS);
-  const rows = await deps.client.query<{ id: string; last: string | null }>(deps.db, "sql",
-    `SELECT id, (SELECT max(ts) FROM Turn WHERE sessionId = $parent.$current.id) AS last FROM Session
-     WHERE endedAt IS NULL AND startedAt < ${sqlStr(iso(cutoff))}`).catch(() => []);
+  const rows = await deps.client.query<{ id: string }>(deps.db, "sql",
+    `SELECT id FROM Session WHERE endedAt IS NULL AND startedAt < ${sqlStr(iso(cutoff))}`);
   let closed = 0;
   for (const r of rows) {
-    const endedAt = r.last ?? iso(cutoff);
-    await deps.client.execute(deps.db, "sql", `UPDATE Session SET endedAt = ${sqlStr(String(endedAt).replace(" ", "T"))} WHERE id = ${sqlStr(r.id)}`);
+    // Separate query on purpose: correlated subqueries return nested rows on some ArcadeDB versions.
+    const last = await deps.client.query<{ last: string | null }>(deps.db, "sql",
+      `SELECT max(ts) AS last FROM Turn WHERE sessionId = ${sqlStr(r.id)}`);
+    const endedAt = typeof last[0]?.last === "string" && last[0].last ? last[0].last.replace(" ", "T") : iso(cutoff);
+    await deps.client.execute(deps.db, "sql", `UPDATE Session SET endedAt = ${sqlStr(endedAt)} WHERE id = ${sqlStr(r.id)}`);
     closed += 1;
   }
   return closed;
