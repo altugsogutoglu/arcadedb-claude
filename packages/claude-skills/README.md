@@ -45,37 +45,6 @@ v0.1.0, pre-release, GitHub-only. Not yet published to npm or to any Claude Code
 
 Open Claude Code in any git repo. The project registers itself, its code graph is indexed in the background, and decisions and insights from each session are captured into `claude_memory`. `/arcadedb-config` shows everything and changes ports, users, or the memory DB when they differ from the defaults.
 
-## Install (from source)
-
-Requires `arcadedb-agent-memory` checked out as a sibling. Optionally `arcadedb-code-indexer` too if you want `/graph-index` to work.
-
-```bash
-# Foundation first
-git clone git@github.com:altugsogutoglu/arcadedb-agent-memory.git
-cd arcadedb-agent-memory && npm install && npm run build && npm link
-cd ..
-
-# (Optional) code-indexer, so /graph-index can shell out to it
-git clone git@github.com:altugsogutoglu/arcadedb-code-indexer.git
-cd arcadedb-code-indexer && npm install && npm run build && npm link
-cd ..
-
-# Then the plugin
-git clone git@github.com:altugsogutoglu/arcadedb-claude-skills.git
-cd arcadedb-claude-skills && npm install && npm run build && npm link
-# `arcadedb-skills-session-start` + `arcadedb-skills-post-tool-use` are now on PATH
-
-# Configure project mapping
-mkdir -p ~/.config/arcadedb
-cp config/projects.example.json ~/.config/arcadedb/projects.json
-# Edit ~/.config/arcadedb/projects.json with your actual project paths and DB names
-
-# Add the plugin to Claude Code
-# (Follow Claude Code's plugin install instructions for your version. The plugin's
-# .claude-plugin/plugin.json + hooks/hooks.json + skills/ + commands/ are what
-# Claude Code needs to discover.)
-```
-
 ## What you get
 
 ### Auto-injected context on session start
@@ -95,9 +64,10 @@ Claude sees this in its context so structural questions are answered from the gr
 
 | Command | Purpose |
 |---|---|
+| `/arcadedb-config [show \| set <key> <value> \| test \| forget <project> [--drop-db] \| index [<project>]]` | Show or change settings, test the connection, forget a project, or index now. The only manual knob. |
 | `/graph-decision "<summary>" --rationale "..." [--repo X]` | Record a Decision node |
 | `/graph-query "<question or cypher>"` | Query the graph in natural language or raw Cypher |
-| `/graph-index [--auto-migrate] [--stack X]` | Index the current project into its DB |
+| `/graph-index [--auto-migrate] [--stack X]` | Alias for `/arcadedb-config index` |
 | `/graph-status` | List databases, type counts, project mapping |
 
 ### Skill: arcadedb-graph
@@ -142,7 +112,21 @@ Environment variables:
 
 ## Configuration
 
-`~/.config/arcadedb/projects.json`:
+Nothing to run by hand. `~/.config/arcadedb/.env` and `~/.config/arcadedb/projects.json` are created automatically (with defaults) on first use, and `/arcadedb-config` is the one command that reads and writes them. You can still edit the files directly if you prefer.
+
+`~/.config/arcadedb/.env` (`chmod 600`), or the matching `ARCADEDB_*` shell variables, which always win over the file:
+```
+ARCADEDB_HTTP_URI=http://localhost:2480
+ARCADEDB_USERNAME=root
+ARCADEDB_ROOT_PASSWORD=changeme
+ARCADEDB_MEMORY_DB=claude_memory
+ARCADEDB_AUTO_INDEX=on
+```
+
+- `ARCADEDB_AUTO_INDEX` (default `on`): whether new or stale projects are indexed automatically in the background. Set to `off` (or `/arcadedb-config set auto-index off`) to index only via `/graph-index` or `/arcadedb-config index`.
+- `ARCADEDB_INDEX_MAX_FILES` (default `20000`): skips indexing a repo larger than this file count rather than blocking the session.
+
+`~/.config/arcadedb/projects.json` (project-to-database map), written automatically as projects register themselves:
 
 ```json
 {
@@ -167,23 +151,11 @@ The plugin matches the current session's working directory against entries by:
 
 If nothing matches, only the memory DB context is injected.
 
-## Limitations (v0.1.0)
+## Limitations
 
-- Bins must be on PATH (global npm install). Direct-from-repo install requires `npm link`.
-- No project auto-discovery; you must edit `projects.json` manually.
-- PostToolUse hook only logs to `stale.log`; it doesn't auto-reindex. v0.2 will add an auto-reindex option.
+- No project auto-discovery beyond CWD/basename/git-remote matching; unregistered projects need one Claude Code session start in the repo root to register.
+- PostToolUse hook only logs to `stale.log`; it doesn't reindex directly, but a background auto-index kicks in on the next session start when `ARCADEDB_AUTO_INDEX` is on (the default).
 - The `/graph-query` natural-language translation depends on Claude inferring Cypher from the schema cheat-sheet. Complex queries may need raw Cypher.
-
-## Roadmap
-
-**v0.2 — zero-friction install.** The goal is two lines in Claude Code:
-
-```
-/plugin marketplace add altugsogutoglu/arcadedb-marketplace
-/plugin install arcadedb-claude-skills@arcadedb-marketplace
-```
-
-That's it — no `npm link`, no global PATH setup, no sibling repos required. The plugin will declare the four sibling packages (`arcadedb-agent-memory`, `arcadedb-code-indexer`, `obsidian-to-arcadedb`, plus its own hooks) as runtime dependencies, resolved from the plugin's local `node_modules` instead of the global `$PATH`. Install on a fresh machine → everything works.
 
 ## License
 

@@ -60,6 +60,9 @@ describe("command: graph-index", () => {
     expect(md).toContain("config index");
     expect(md).not.toContain("npm install -g");
   });
+  it("passes $ARGUMENTS through bare so Claude Code's substitution works", () => {
+    expect(md).toContain("config index $ARGUMENTS");
+  });
 });
 
 describe("command: graph-status", () => {
@@ -86,5 +89,10 @@ describe("command: arcadedb-config", () => {
   });
   it("arcadedb-init.md is gone", () => {
     expect(existsSync(join(__dirname, "..", "commands", "arcadedb-init.md"))).toBe(false);
+  });
+  it("assigns $ARGUMENTS to a shell var before using it, so Claude Code's textual substitution works", () => {
+    expect(md).toContain('ARGS="$ARGUMENTS"');
+    expect(md).toContain("${ARGS:-show}");
+    expect(md).not.toContain("${ARGUMENTS");
   });
 });

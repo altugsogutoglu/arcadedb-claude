@@ -11,7 +11,8 @@ The only knob. Defaults: server `http://localhost:2480`, user `root`, memory DB 
 Run the bundled CLI. `$ARGUMENTS` is passed through verbatim; with no arguments run `show`.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/hooks/cli.js" config ${ARGUMENTS:-show}
+ARGS="$ARGUMENTS"
+node "${CLAUDE_PLUGIN_ROOT}/hooks/cli.js" config ${ARGS:-show}
 ```
 
 ## Subcommands

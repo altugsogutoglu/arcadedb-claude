@@ -1,5 +1,5 @@
 ---
-description: "Index the current project into its ArcadeDB graph. Shells out to arcadedb-index."
+description: "Index the current project into its ArcadeDB graph now (alias for /arcadedb-config index). Automatic in the background otherwise."
 argument-hint: "[--auto-migrate] [--stack nextjs|laravel|...]"
 allowed-tools: Bash
 ---
@@ -9,7 +9,7 @@ allowed-tools: Bash
 Alias for `/arcadedb-config index`.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/hooks/cli.js" config index ${ARGUMENTS}
+node "${CLAUDE_PLUGIN_ROOT}/hooks/cli.js" config index $ARGUMENTS
 ```
 
 Walks the current project and writes its structure (`:Module`, `:File`, `:IMPORTS`) to its graph database via the bundled `arcadedb-index` logic.
