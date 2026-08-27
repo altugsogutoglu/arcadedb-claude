@@ -3,8 +3,19 @@ import { ArcadeDBConnectionError, DatabaseNotFoundError } from "./errors.js";
 
 export type Language = "cypher" | "sql" | "sqlscript" | "gremlin";
 
+export interface ClientOptions {
+  /** Abort any single request that has not completed within this many milliseconds. */
+  timeoutMs?: number;
+}
+
+export const DEFAULT_TIMEOUT_MS = 10_000;
+
 export class Client {
-  constructor(private env: ArcadeDBEnv) {}
+  private timeoutMs: number;
+
+  constructor(private env: ArcadeDBEnv, options: ClientOptions = {}) {
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
 
   private authHeader(): string {
     return "Basic " + Buffer.from(`${this.env.username}:${this.env.password}`).toString("base64");
@@ -17,6 +28,7 @@ export class Client {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: this.authHeader() },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
@@ -53,6 +65,7 @@ export class Client {
     try {
       res = await fetch(`${this.env.httpUri}/api/v1/databases`, {
         headers: { Authorization: this.authHeader() },
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);

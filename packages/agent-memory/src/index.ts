@@ -1,5 +1,6 @@
 export { Client } from "./client.js";
-export type { Language } from "./client.js";
+export type { Language, ClientOptions } from "./client.js";
+export { DEFAULT_TIMEOUT_MS } from "./client.js";
 export { loadEnv } from "./env.js";
 export type { ArcadeDBEnv } from "./env.js";
 export { ArcadeDBConnectionError, DatabaseNotFoundError, SchemaMismatchError } from "./errors.js";
