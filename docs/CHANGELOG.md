@@ -4,6 +4,23 @@ Keep a Changelog style. Newest on top. Since 0.8.0 there is one package: package
 
 ## [Unreleased]
 
+## arcadedb-claude-skills 0.9.0 - 2026-08-27
+
+### Changed
+- Memory is raw first. The Stop hook now stores every prompt and answer as a `:Turn` node (`DURING` the session) with no model call. `ARCADEDB_CAPTURE=off` disables it.
+- The LLM extractor is off by default (`ARCADEDB_EXTRACTOR=live|dryrun` to enable). It cost 15-20k tokens per run and blocked the Stop hook; when enabled it no longer issues a second request while one is in flight.
+- `/graph-query` answers fuzzy "what did we say about X" questions through semantic search.
+
+### Added
+- Local embeddings: `all-MiniLM-L6-v2` via transformers.js, installed once into `~/.config/arcadedb/embed/` in the background on SessionStart, run by a detached `hooks/embed-runner.js` after each turn. `Turn`, `Decision`, `Insight`, `Question`, `Answer` carry a 384-dim `embedding` with an `LSM_VECTOR` cosine index. `ARCADEDB_EMBED=off` disables it.
+- `arcadedb-skills search <query> [--limit] [--types] [--repo] [--json]` and `arcadedb-skills embed install|status|run`.
+- `/arcadedb-config set capture|embed|extractor`.
+- Schema: `ARRAY_OF_FLOATS` property type and `vectorIndex` on a property render to `CREATE INDEX ... LSM_VECTOR METADATA {...}`.
+- `arcadedb-skills extract-replay <sessionDbId|audit.jsonl>`: re-writes a session's audited triples (idempotent MERGE) and re-embeds them.
+
+### Fixed
+- The extractor's Cypher builder only MERGEd nodes on their natural key, so every `:Decision`/`:Insight`/`:Question`/`:Answer` it wrote had an `id` and nothing else: no summary, no text, no timestamp. It now SETs every scalar prop and stamps `decidedAt`/`createdAt`/`askedAt`/`answeredAt` on create. Existing empty nodes are repaired by `extract-replay` from the audit files.
+
 ## arcadedb-claude-skills 0.8.0 - 2026-08-27
 
 ### Changed

@@ -15,9 +15,14 @@ export interface MemoryContext {
   insightCount: number;
 }
 
+export type EmbedState = "off" | "ready" | "installing" | "missing";
+
 export interface ContextInput {
   project: ProjectContext | null;
   memory: MemoryContext;
+  /** Raw :Turn capture on the Stop hook. Defaults to on. */
+  capture?: boolean;
+  embed?: EmbedState;
   extractorMode?: string;
   serverLine?: string;
 }
@@ -48,15 +53,26 @@ export function buildContext(input: ContextInput): string {
   lines.push(
     `  Memory DB: ${input.memory.db} (${input.memory.decisionCount} decisions, ${input.memory.insightCount} insights)`
   );
+  lines.push(captureLine(input.capture ?? true, input.embed ?? "off"));
   lines.push(extractorLine(input.extractorMode));
   return lines.join("\n");
 }
 
+function captureLine(capture: boolean, embed: EmbedState): string {
+  if (!capture) return "  Capture: off (ARCADEDB_CAPTURE=on to log every prompt and answer as :Turn)";
+  const search =
+    embed === "ready" ? "semantic search ready: arcadedb-skills search <query>"
+    : embed === "installing" ? "embedding runtime installing in background, search available next session"
+    : embed === "missing" ? "embedding runtime missing, run: arcadedb-skills embed install"
+    : "embeddings off (ARCADEDB_EMBED=on for semantic search)";
+  return `  Capture: on (every prompt/answer logged as :Turn, no LLM; ${search})`;
+}
+
 function extractorLine(extractorMode: string | undefined): string {
-  const mode = (extractorMode ?? "live").toLowerCase();
+  const mode = (extractorMode ?? "off").toLowerCase();
   return mode === "off"
-    ? "  LLM extractor: off (set ARCADEDB_EXTRACTOR=live or dryrun to capture)"
+    ? "  LLM extractor: off (ARCADEDB_EXTRACTOR=live to distill decisions/insights with a subagent; costs tokens per run)"
     : mode === "dryrun"
       ? "  LLM extractor: dryrun (JSONL audit only; set ARCADEDB_EXTRACTOR=live to write the graph)"
-      : "  LLM extractor: live (capturing decisions/insights/Q&A into claude_memory; ARCADEDB_EXTRACTOR=off to disable)";
+      : "  LLM extractor: live (distilling decisions/insights/Q&A into claude_memory every 10 turns or 15 min; ARCADEDB_EXTRACTOR=off to disable)";
 }

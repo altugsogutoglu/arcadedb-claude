@@ -1,7 +1,7 @@
 # Project State
 
 **Last updated:** 2026-08-27
-**Phase:** 1 - plug-and-play shipped, suite merged into one package (0.8.0); S2 embed next
+**Phase:** 1 - plug-and-play, one package, raw capture + local semantic search shipped (0.9.0); S5 SessionStart pre-fetch next
 **Branch:** main
 
 ## What this project is
@@ -12,6 +12,15 @@ meaning (vector/semantic) and by relationship (graph). Hybrid memory. Own DB.
 Intended long-term as an alternative to claude-mem's vector-only model.
 
 ## Ground truth (verified 2026-06-17, with reproduction; fix shipped 2026-08-26)
+
+- **0.9.0: raw capture + local vectors, extractor opt-in.** Every prompt/answer is
+  a `:Turn` written by the Stop hook with no model call. Embeddings come from
+  `all-MiniLM-L6-v2` through transformers.js installed once into
+  `~/.config/arcadedb/embed/` (background, ~260 MB), filled by a detached
+  embed-runner after each turn; `arcadedb-skills search` ranks Turn/Decision/
+  Insight/Q&A by cosine. The LLM extractor is off unless `ARCADEDB_EXTRACTOR=live`.
+  Reason: the user's goal was zero AI cost, everything logged, searchable by
+  meaning; the per-turn extractor (15-20k tokens, lossy, blocking) was not that.
 
 - **0.7.0: plug-and-play. Only manual step is the password.** Everything else is
   automatic: `.env` is created with defaults on first SessionStart (shell env

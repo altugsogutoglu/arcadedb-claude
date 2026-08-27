@@ -10,6 +10,12 @@ export interface ResolvedConfig {
   password: string;
   memoryDb: string;
   autoIndex: boolean;
+  /** Raw :Turn capture of every prompt/answer. No LLM involved. */
+  capture: boolean;
+  /** Local embeddings (transformers.js) for semantic search. No API involved. */
+  embed: boolean;
+  /** LLM extractor: off (default) | live | dryrun. Costs tokens per run. */
+  extractor: "off" | "live" | "dryrun";
   envPath: string;
   sources: {
     httpUri: ConfigSource;
@@ -17,6 +23,9 @@ export interface ResolvedConfig {
     password: ConfigSource;
     memoryDb: ConfigSource;
     autoIndex: ConfigSource;
+    capture: ConfigSource;
+    embed: ConfigSource;
+    extractor: ConfigSource;
   };
 }
 
@@ -25,6 +34,9 @@ export const DEFAULTS = {
   username: "root",
   memoryDb: "claude_memory",
   autoIndex: true,
+  capture: true,
+  embed: true,
+  extractor: "off",
 } as const;
 
 const KEYS = {
@@ -33,6 +45,9 @@ const KEYS = {
   password: "ARCADEDB_ROOT_PASSWORD",
   memoryDb: "ARCADEDB_MEMORY_DB",
   autoIndex: "ARCADEDB_AUTO_INDEX",
+  capture: "ARCADEDB_CAPTURE",
+  embed: "ARCADEDB_EMBED",
+  extractor: "ARCADEDB_EXTRACTOR",
 } as const;
 
 export const DB_NAME = /^[a-z][a-z0-9_]*$/;
@@ -101,12 +116,20 @@ export function resolveConfig(opts: { envPath?: string; processEnv?: NodeJS.Proc
     memoryDb.source = "default";
   }
   const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
+  const captureRaw = pick(KEYS.capture, processEnv, file, DEFAULTS.capture ? "on" : "off");
+  const embedRaw = pick(KEYS.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
+  const extractorRaw = pick(KEYS.extractor, processEnv, file, DEFAULTS.extractor);
+  const extractorMode = extractorRaw.value.toLowerCase();
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
     password: password.value,
     memoryDb: memoryDb.value,
     autoIndex: autoIndexRaw.value.toLowerCase() !== "off",
+    capture: captureRaw.value.toLowerCase() !== "off",
+    embed: embedRaw.value.toLowerCase() !== "off",
+    // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
+    extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
     envPath,
     sources: {
       httpUri: httpUri.source,
@@ -114,6 +137,9 @@ export function resolveConfig(opts: { envPath?: string; processEnv?: NodeJS.Proc
       password: password.source,
       memoryDb: memoryDb.source,
       autoIndex: autoIndexRaw.source,
+      capture: captureRaw.source,
+      embed: embedRaw.source,
+      extractor: extractorRaw.source,
     },
   };
 }

@@ -26,6 +26,37 @@ describe("buildExtractorCypher", () => {
     expect(cy).toMatch(/MERGE \(s\)-\[:DURING\]->\(sess\)/);
   });
 
+  it("sets every scalar prop besides the natural key, and stamps the schema timestamp on create", () => {
+    const cy = buildExtractorCypher({
+      triple: {
+        subject: { label: "Decision", props: { id: "d1", summary: "one package", rationale: "less drift", nested: { x: 1 }, none: null } },
+        verb: "ABOUT",
+        object: { label: "Concept", props: { name: "npm", weight: 2 } },
+        evidence: "ok",
+      },
+      sessionDbId: "s",
+      naturalKeys: { ...naturalKeys, Decision: ["id"] },
+    });
+    expect(cy).toMatch(/MERGE \(s:Decision \{id:"d1"\}\)\n  ON CREATE SET s\.firstSeenAt = datetime\(\), s\.decidedAt = datetime\(\)\nSET s\.summary = "one package",\n    s\.rationale = "less drift"/);
+    expect(cy).not.toMatch(/s\.nested|s\.none|s\.id =/);
+    expect(cy).toMatch(/MERGE \(o:Concept \{name:"npm"\}\)\n  ON CREATE SET o\.firstSeenAt = datetime\(\)\nSET o\.weight = 2/);
+  });
+
+  it("keeps a timestamp the extractor supplied", () => {
+    const cy = buildExtractorCypher({
+      triple: {
+        subject: { label: "Insight", props: { id: "i1", topic: "t", text: "x", createdAt: "2026-01-01T00:00:00Z" } },
+        verb: "ABOUT",
+        object: { label: "Concept", props: { name: "npm" } },
+        evidence: "ok",
+      },
+      sessionDbId: "s",
+      naturalKeys: { ...naturalKeys, Insight: ["id"] },
+    });
+    expect(cy).toMatch(/ON CREATE SET s\.firstSeenAt = datetime\(\)\nSET/);
+    expect(cy).toMatch(/s\.createdAt = "2026-01-01T00:00:00Z"/);
+  });
+
   it("omits confidence when not provided", () => {
     const cy = buildExtractorCypher({
       triple: {

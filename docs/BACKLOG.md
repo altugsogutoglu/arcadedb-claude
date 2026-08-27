@@ -25,19 +25,19 @@ Full design: `docs/superpowers/specs/2026-06-17-hybrid-vector-memory-design.md`
 - **S2 - embed module**
   - Add `@xenova/transformers` + `all-MiniLM-L6-v2`. Single fn `embed(text)->float[384]`.
   - Offline, no API. Unit test: known text -> stable vector, correct length.
-  - Status: not started. Depends on S1.
+  - Status: shipped 0.9.0 (`src/embed.ts`, runtime lazily installed into `~/.config/arcadedb/embed/`).
 
 - **S3 - vector index + write path**
   - Create ArcadeDB JVector HNSW index (COSINE) on `embedding` of Decision/Insight/QA.
   - extract-write CLI embeds each note on write. Backfill existing 6 nodes.
   - Done when: stored node has 384-dim embedding, read-back matches.
-  - Status: not started. Depends on S2.
+  - Status: shipped 0.9.0. Index type on this server is `LSM_VECTOR` (HNSW is not accepted). Embedding happens in a detached embed-runner after the write, not inline, so a missing runtime never blocks a write; backfill = same runner.
 
 - **S4 - semantic retrieval**
   - graph-query skill semantic mode: embed query -> `vectorNeighbors()` top-K ->
     optional graph hop for related context.
   - Done when: synonym query hits (e.g. "lease pricing" matches "rental cost logic").
-  - Status: not started. Depends on S3.
+  - Status: shipped 0.9.0 (`arcadedb-skills search`, brute-force `vectorCosineSimilarity` top-K; proven by tests/turn-capture-live.test.ts with exactly that synonym pair). `vectorNeighbors()` over the LSM_VECTOR index is a follow-up once the planner accepts it for `ORDER BY`.
 
 - **S5 - pattern surface at SessionStart**
   - Semantic pre-fetch of relevant past insights / do-don'ts for the active project,

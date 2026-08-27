@@ -1,7 +1,50 @@
 #!/usr/bin/env node
 
 // src/index-runner.ts
-import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, unlinkSync, openSync, writeSync, closeSync, realpathSync as realpathSync2 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync3, unlinkSync as unlinkSync2, realpathSync as realpathSync2 } from "node:fs";
+
+// src/lock.ts
+import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function createLock(path) {
+  let fd;
+  try {
+    fd = openSync(path, "wx");
+  } catch {
+    return false;
+  }
+  try {
+    writeSync(fd, String(process.pid));
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+function acquireLock(path) {
+  if (createLock(path)) return true;
+  let pid = NaN;
+  try {
+    pid = Number(readFileSync(path, "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (Number.isFinite(pid) && pid > 0 && pidAlive(pid)) return false;
+  try {
+    unlinkSync(path);
+  } catch {
+    return false;
+  }
+  return createLock(path);
+}
+
+// src/index-runner.ts
 import { execSync } from "node:child_process";
 import { join as join10 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,6 +161,12 @@ var coreSchema = {
 };
 
 // src/agent-memory/schemas/memory.ts
+var EMBEDDING_DIMENSIONS = 384;
+var embedding = {
+  name: "embedding",
+  type: "ARRAY_OF_FLOATS",
+  vectorIndex: { dimensions: EMBEDDING_DIMENSIONS, similarity: "COSINE" }
+};
 var memorySchema = {
   name: "memory",
   vertices: [
@@ -132,13 +181,27 @@ var memorySchema = {
       ]
     },
     {
+      name: "Turn",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "sessionId", type: "STRING", notNull: true },
+        { name: "idx", type: "INTEGER", notNull: true },
+        { name: "role", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "ts", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" },
+        embedding
+      ]
+    },
+    {
       name: "Decision",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "summary", type: "STRING", notNull: true },
         { name: "rationale", type: "STRING" },
         { name: "decidedAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -148,7 +211,8 @@ var memorySchema = {
         { name: "topic", type: "STRING", notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "createdAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -157,7 +221,8 @@ var memorySchema = {
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "askedAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -166,7 +231,8 @@ var memorySchema = {
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "answeredAt", type: "DATETIME", notNull: true },
-        { name: "confidence", type: "FLOAT" }
+        { name: "confidence", type: "FLOAT" },
+        embedding
       ]
     }
   ],
@@ -344,6 +410,10 @@ function renderProperty(typeName, p) {
   const stmts = [`CREATE PROPERTY ${typeName}.${p.name} IF NOT EXISTS ${p.type}`];
   if (p.primaryKey) {
     stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) UNIQUE`);
+  }
+  if (p.vectorIndex) {
+    const meta = JSON.stringify({ dimensions: p.vectorIndex.dimensions, similarity: p.vectorIndex.similarity });
+    stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) LSM_VECTOR METADATA ${meta}`);
   }
   return stmts;
 }
@@ -1047,20 +1117,26 @@ function captureLogPath() {
 }
 
 // src/config.ts
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync as readFileSync2, writeFileSync, renameSync, chmodSync } from "node:fs";
 import { dirname as dirname2, join as join7 } from "node:path";
 var DEFAULTS = {
   httpUri: "http://localhost:2480",
   username: "root",
   memoryDb: "claude_memory",
-  autoIndex: true
+  autoIndex: true,
+  capture: true,
+  embed: true,
+  extractor: "off"
 };
 var KEYS = {
   httpUri: "ARCADEDB_HTTP_URI",
   username: "ARCADEDB_USERNAME",
   password: "ARCADEDB_ROOT_PASSWORD",
   memoryDb: "ARCADEDB_MEMORY_DB",
-  autoIndex: "ARCADEDB_AUTO_INDEX"
+  autoIndex: "ARCADEDB_AUTO_INDEX",
+  capture: "ARCADEDB_CAPTURE",
+  embed: "ARCADEDB_EMBED",
+  extractor: "ARCADEDB_EXTRACTOR"
 };
 var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
@@ -1069,7 +1145,7 @@ function envFilePath() {
 function readEnvFile(path = envFilePath()) {
   if (!existsSync(path)) return {};
   const map = {};
-  for (const line of readFileSync(path, "utf8").split("\n")) {
+  for (const line of readFileSync2(path, "utf8").split("\n")) {
     const t = line.trim();
     if (!t || t.startsWith("#")) continue;
     const eq = t.indexOf("=");
@@ -1098,19 +1174,30 @@ function resolveConfig(opts = {}) {
     memoryDb.source = "default";
   }
   const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
+  const captureRaw = pick(KEYS.capture, processEnv, file, DEFAULTS.capture ? "on" : "off");
+  const embedRaw = pick(KEYS.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
+  const extractorRaw = pick(KEYS.extractor, processEnv, file, DEFAULTS.extractor);
+  const extractorMode = extractorRaw.value.toLowerCase();
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
     password: password.value,
     memoryDb: memoryDb.value,
     autoIndex: autoIndexRaw.value.toLowerCase() !== "off",
+    capture: captureRaw.value.toLowerCase() !== "off",
+    embed: embedRaw.value.toLowerCase() !== "off",
+    // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
+    extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
     envPath,
     sources: {
       httpUri: httpUri.source,
       username: username.source,
       password: password.source,
       memoryDb: memoryDb.source,
-      autoIndex: autoIndexRaw.source
+      autoIndex: autoIndexRaw.source,
+      capture: captureRaw.source,
+      embed: embedRaw.source,
+      extractor: extractorRaw.source
     }
   };
 }
@@ -1119,11 +1206,11 @@ function toClientEnv(cfg) {
 }
 
 // src/auto-register.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync4, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { basename as basename2, dirname as dirname3, join as join8 } from "node:path";
 
 // src/project-map.ts
-import { readFileSync as readFileSync2, existsSync as existsSync2, realpathSync } from "node:fs";
+import { readFileSync as readFileSync3, existsSync as existsSync2, realpathSync } from "node:fs";
 var DEFAULT_MAP = {
   version: 1,
   defaultMemoryDb: "claude_memory",
@@ -1131,7 +1218,7 @@ var DEFAULT_MAP = {
 };
 function loadProjects(path, onError) {
   if (!existsSync2(path)) return { ...DEFAULT_MAP, projects: {} };
-  const raw = readFileSync2(path, "utf8");
+  const raw = readFileSync3(path, "utf8");
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -1192,44 +1279,6 @@ function flag(argv, name) {
   const i = argv.indexOf(`--${name}`);
   return i === -1 ? void 0 : argv[i + 1];
 }
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function createLock(path) {
-  let fd;
-  try {
-    fd = openSync(path, "wx");
-  } catch {
-    return false;
-  }
-  try {
-    writeSync(fd, String(process.pid));
-  } finally {
-    closeSync(fd);
-  }
-  return true;
-}
-function acquireLock(path) {
-  if (createLock(path)) return true;
-  let pid = NaN;
-  try {
-    pid = Number(readFileSync4(path, "utf8").trim());
-  } catch {
-    return false;
-  }
-  if (Number.isFinite(pid) && pid > 0 && pidAlive(pid)) return false;
-  try {
-    unlinkSync(path);
-  } catch {
-    return false;
-  }
-  return createLock(path);
-}
 function countTrackedFiles(root) {
   try {
     const out = execSync("git ls-files", { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
@@ -1242,7 +1291,7 @@ var STALE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 function pruneStale(path, key, now = Date.now()) {
   if (!existsSync5(path)) return;
   const mine = new RegExp(`^\\[[^\\]]+\\] ${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(`);
-  const kept = readFileSync4(path, "utf8").split("\n").filter((l) => {
+  const kept = readFileSync5(path, "utf8").split("\n").filter((l) => {
     if (!l) return false;
     if (mine.test(l)) return false;
     const m = /^\[([^\]]+)\]/.exec(l);
@@ -1293,7 +1342,7 @@ async function main() {
     return 1;
   } finally {
     try {
-      unlinkSync(lock);
+      unlinkSync2(lock);
     } catch {
     }
   }

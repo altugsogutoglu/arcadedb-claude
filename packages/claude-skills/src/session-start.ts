@@ -30,10 +30,13 @@ import {
   type MemoryContext,
 } from "./context-builder.js";
 import { writeSessionState, readSessionState } from "./session-state.js";
+import type { EmbedState } from "./context-builder.js";
 import { readHookInput } from "./hook-input.js";
 import { countTranscriptLines } from "./transcript-lines.js";
 import { decideIndexNeed, stalePath } from "./index-need.js";
 import { spawnIndexer } from "./index-spawn.js";
+import { spawnEmbedRunner } from "./embed-spawn.js";
+import { embedStatus, spawnEmbedInstall } from "./embed.js";
 import { logCapture } from "./capture-log.js";
 
 async function main(): Promise<void> {
@@ -124,7 +127,21 @@ async function main(): Promise<void> {
   }
   const memoryCtx = await probeMemory(client, memoryDb);
 
-  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"], serverLine }) + "\n");
+  let embed: EmbedState = "off";
+  if (cfg.embed) {
+    let status = embedStatus();
+    if (status === "missing") {
+      const pid = spawnEmbedInstall();
+      logCapture("embed_install_spawned", { pid });
+      if (pid) status = "installing";
+    } else if (status === "ready") {
+      // Catch up on anything the last session left unembedded (install finished mid-session, server outage).
+      spawnEmbedRunner({ db: memoryDb });
+    }
+    embed = status;
+  }
+
+  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, capture: cfg.capture, embed, extractorMode: cfg.extractor, serverLine }) + "\n");
 
   // After context is printed, set up :Session lifecycle if we have a project.
   if (project) {
@@ -168,6 +185,8 @@ async function tryStartSession(
     lastExtractedAt: now,
     currentLine: seedLine,
     lastExtractedLine: seedLine,
+    lastCapturedLine: seedLine,
+    extractInFlightSince: null,
   });
 
   if (previousSessionId) {

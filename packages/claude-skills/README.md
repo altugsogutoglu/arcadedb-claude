@@ -61,32 +61,44 @@ Claude sees this in its context so structural questions are answered from the gr
 
 Triggers on phrases like "how does X work", "what calls Y", "decision about Z". Tells Claude to query the graph first instead of reading files.
 
-### Session capture (on by default)
+### Session capture (on by default, no LLM)
 
-The plugin mines each session for structured triples: decisions, insights, Q&A pairs, blockers, fixes, entity mentions, using a Haiku-class subagent at rate-limited intervals. Since v0.6.0 it writes them into the graph by default.
+Every prompt you type and every answer Claude gives is written to the memory DB as a `:Turn` node (`DURING` the `:Session`) by the `Stop` hook. Pure code: no model call, no token cost, nothing summarised away. Tool calls, tool output and thinking are not stored.
 
-What happens:
+### Semantic search (on by default, local)
 
-- Every 10 turns or 15 minutes (whichever first), the `Stop` hook emits a `decision:block` JSON that asks Claude to dispatch `Agent(subagent_type=extractor)`.
-- The extractor reads the recent transcript slice, applies the schema vocabulary, and hands the triples to `arcadedb-skills extract-write`.
-- Every batch is written to a JSONL audit file at `~/.config/arcadedb/dryrun/<sessionDbId>.jsonl`, whatever the mode. In `live` mode the triples are also written into the memory DB.
-- The session continues normally. Cost is ~$0.005 per extraction.
-
-To review what was captured:
+Turns and notes get a 384-dim embedding from `all-MiniLM-L6-v2` running locally through transformers.js. The first SessionStart installs the runtime (~260 MB) into `~/.config/arcadedb/embed/` in the background; from the next session on a detached `embed-runner` fills embeddings after each turn (3 ms per turn once the model is warm). ArcadeDB keeps an `LSM_VECTOR` cosine index on `embedding`.
 
 ```bash
-npx arcadedb-memory dryrun-review <sessionDbId>
+arcadedb-skills search "rental cost logic"            # top 10 across Turn/Decision/Insight/Q&A
+arcadedb-skills search "why one package" --types Turn --repo arcadedb-claude --limit 5 --json
+arcadedb-skills embed status | install | run          # runtime state, install now, embed pending nodes now
+arcadedb-skills extract-replay <sessionDbId>          # re-write an audited extractor batch (repair / re-embed)
 ```
 
-Walks each triple with evidence, `a/r/s/q` prompts. Accepted triples accumulate in `~/.config/arcadedb/dryrun-accepted.jsonl`.
+`/graph-query` uses this for fuzzy questions ("what did we say about X").
+
+### LLM extractor (off by default)
+
+Optional distillation of a transcript slice into `:Decision` / `:Insight` / `:Question` / `:Answer` triples with graph edges, done by a subagent. Costs roughly 15-20k tokens per run and blocks the Stop hook while it runs, so it is opt-in: `ARCADEDB_EXTRACTOR=live` (or `/arcadedb-config set extractor live`).
+
+When on:
+
+- Every 10 turns or 15 minutes (whichever first), the `Stop` hook emits a `decision:block` JSON that asks Claude to dispatch `Agent(subagent_type=extractor)`. A second request is never issued while one is in flight (10 minute stale guard).
+- The extractor reads the transcript slice and hands the triples to `arcadedb-skills extract-write`.
+- Every batch is written to a JSONL audit file at `~/.config/arcadedb/dryrun/<sessionDbId>.jsonl`. In `live` mode the triples are also written into the memory DB; `dryrun` writes the audit only.
+
+Review a batch with `arcadedb-memory dryrun-review <sessionDbId>`.
 
 Environment variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ARCADEDB_EXTRACTOR` | `live` | `live` writes to the graph, `dryrun` writes the JSONL audit batch only, `off` disables capture entirely. |
-| `ARCADEDB_EXTRACT_TURNS` | `10` | Trip after this many turns since last extract. |
-| `ARCADEDB_EXTRACT_INTERVAL_MS` | `900000` (15 min) | Trip after this much elapsed time. |
+| `ARCADEDB_CAPTURE` | `on` | Raw `:Turn` capture on every Stop. |
+| `ARCADEDB_EMBED` | `on` | Local embeddings + background runtime install. |
+| `ARCADEDB_EXTRACTOR` | `off` | `live` writes triples to the graph, `dryrun` writes the JSONL audit only. |
+| `ARCADEDB_EXTRACT_TURNS` | `10` | Extractor: trip after this many turns since last extract. |
+| `ARCADEDB_EXTRACT_INTERVAL_MS` | `900000` (15 min) | Extractor: trip after this much elapsed time. |
 
 ## Configuration
 

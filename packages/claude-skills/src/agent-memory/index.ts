@@ -7,6 +7,8 @@ export { ArcadeDBConnectionError, DatabaseNotFoundError, SchemaMismatchError } f
 export type { Schema, VertexTypeDef, EdgeTypeDef, PropertyDef, PropertyType } from "./schemas/types.js";
 export { allSchemas, coreSchema, memorySchema, codeSchema, businessSchema, notesSchema } from "./schemas/all.js";
 export type { SchemaDomain } from "./schemas/all.js";
+export { EMBEDDING_DIMENSIONS, EMBEDDED_TYPES } from "./schemas/memory.js";
+export type { EmbeddedType } from "./schemas/memory.js";
 export { renderSchema } from "./migrations/render.js";
 export { applySchemas } from "./migrations/apply.js";
 export { recordDecision, queryDecisions } from "./memory/decisions.js";

@@ -17,6 +17,7 @@ async function runStop(stdin: string, env: Record<string, string | undefined>): 
     }
     if (env["ARCADEDB_EXTRACTOR"] === undefined) delete childEnv["ARCADEDB_EXTRACTOR"];
     if (env["CLAUDE_PLUGIN_ROOT"] === undefined) delete childEnv["CLAUDE_PLUGIN_ROOT"];
+    if (env["ARCADEDB_CAPTURE"] === undefined) delete childEnv["ARCADEDB_CAPTURE"];
     for (const [k, v] of Object.entries(env)) {
       if (v !== undefined) childEnv[k] = v;
     }
@@ -47,6 +48,23 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   if (originalHome !== undefined) process.env["HOME"] = originalHome;
 });
+
+function baseState(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    claudeCodeSessionId: "abc",
+    sessionDbId: "uuid-trip",
+    repo: "demo",
+    cwd: "/tmp",
+    userName: "Tester",
+    startedAt: "2026-05-19T10:00:00.000Z",
+    currentTurnIdx: 0,
+    lastExtractedTurnIdx: 0,
+    lastExtractedAt: "2026-05-19T10:00:00.000Z",
+    currentLine: 0,
+    lastExtractedLine: 0,
+    ...over,
+  };
+}
 
 describe("stop hook", () => {
   it("exits 0 silently when ARCADEDB_EXTRACTOR is unset", async () => {
@@ -150,7 +168,7 @@ describe("stop hook", () => {
     expect(stdout.trim()).toBe("");
   });
 
-  it("dispatches in live mode by default (flag unset)", async () => {
+  it("stays off by default (flag unset)", async () => {
     const transcript = join(tmpHome, "live-mode.jsonl");
     writeFileSync(transcript, Array.from({ length: 20 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n");
     writeFileSync(
@@ -171,12 +189,49 @@ describe("stop hook", () => {
     );
     const { stdout } = await runStop(
       JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: transcript }),
-      { HOME: tmpHome, ARCADEDB_EXTRACTOR: undefined },
+      { HOME: tmpHome, ARCADEDB_EXTRACTOR: undefined, ARCADEDB_CAPTURE: "off" },
+    );
+    expect(stdout).toBe("");
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"reason":"extractor_off"');
+    expect(log).not.toContain('"event":"trigger"');
+  });
+
+  it("accepts ARCADEDB_EXTRACTOR=on as live", async () => {
+    const transcript = join(tmpHome, "on-mode.jsonl");
+    writeFileSync(transcript, Array.from({ length: 20 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n");
+    writeFileSync(join(tmpHome, ".config", "arcadedb", "sessions", "abc.json"), JSON.stringify(baseState({ currentTurnIdx: 9 })));
+    const { stdout } = await runStop(
+      JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: transcript }),
+      { HOME: tmpHome, ARCADEDB_EXTRACTOR: "on", ARCADEDB_CAPTURE: "off" },
     );
     const out = JSON.parse(stdout);
     expect(out.decision).toBe("block");
     expect(out.reason).toContain("- mode: live");
-    expect(out.reason).toContain("subagent_type=extractor");
+  });
+
+  it("does not request a second extraction while one is in flight", async () => {
+    const transcript = join(tmpHome, "inflight.jsonl");
+    writeFileSync(transcript, Array.from({ length: 20 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n");
+    const statePath = join(tmpHome, ".config", "arcadedb", "sessions", "abc.json");
+    writeFileSync(statePath, JSON.stringify(baseState({ currentTurnIdx: 9 })));
+    const env = { HOME: tmpHome, ARCADEDB_EXTRACTOR: "live", ARCADEDB_CAPTURE: "off" };
+    const stdin = JSON.stringify({ session_id: "abc", stop_hook_active: false, transcript_path: transcript });
+    const first = await runStop(stdin, env);
+    expect(JSON.parse(first.stdout).decision).toBe("block");
+    expect(JSON.parse(readFileSync(statePath, "utf8")).extractInFlightSince).toBeTruthy();
+
+    const second = await runStop(stdin, env);
+    expect(second.stdout).toBe("");
+    const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
+    expect(log).toContain('"reason":"extract_in_flight"');
+
+    // A stale in-flight marker (subagent died) must not block forever.
+    const stale = JSON.parse(readFileSync(statePath, "utf8"));
+    stale.extractInFlightSince = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    writeFileSync(statePath, JSON.stringify(stale));
+    const third = await runStop(stdin, env);
+    expect(JSON.parse(third.stdout).decision).toBe("block");
   });
 
   it("dispatches in dryrun mode when ARCADEDB_EXTRACTOR=dryrun", async () => {

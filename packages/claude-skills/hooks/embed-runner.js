@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-// src/session-end.ts
-import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync3 } from "node:fs";
-import { dirname as dirname2 } from "node:path";
+// src/embed-runner.ts
+import { unlinkSync as unlinkSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 
 // src/agent-memory/errors.ts
 var ArcadeDBConnectionError = class extends Error {
@@ -90,18 +90,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 var DEFAULT_PATH = join(homedir(), ".config", "arcadedb", ".env");
 
-// src/agent-memory/memory/sessions.ts
-async function endSession(client, db, id, summary) {
-  const summaryClause = summary ? `, s.summary = ${cypherStr(summary)}` : "";
-  await client.execute(
-    db,
-    "cypher",
-    `MATCH (s:Session {id: ${cypherStr(id)}}) SET s.endedAt = datetime(${cypherStr((/* @__PURE__ */ new Date()).toISOString())})${summaryClause}`
-  );
-}
-function cypherStr(s) {
-  return `'${s.replace(/'/g, "\\'")}'`;
-}
+// src/agent-memory/schemas/memory.ts
+var EMBEDDING_DIMENSIONS = 384;
+var EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer"];
 
 // src/env-paths.ts
 import { homedir as homedir2 } from "node:os";
@@ -109,43 +100,12 @@ import { join as join2 } from "node:path";
 function configDir() {
   return join2(homedir2(), ".config", "arcadedb");
 }
-function projectsJsonPath() {
-  return join2(configDir(), "projects.json");
-}
-function hookErrorLogPath() {
-  return join2(configDir(), "hook-errors.log");
-}
-function sessionsDir() {
-  return join2(configDir(), "sessions");
-}
-function sessionStatePath(claudeCodeSessionId) {
-  return join2(sessionsDir(), `${claudeCodeSessionId}.json`);
-}
-
-// src/project-map.ts
-import { readFileSync, existsSync, realpathSync } from "node:fs";
-var DEFAULT_MAP = {
-  version: 1,
-  defaultMemoryDb: "claude_memory",
-  projects: {}
-};
-function loadProjects(path, onError) {
-  if (!existsSync(path)) return { ...DEFAULT_MAP, projects: {} };
-  const raw = readFileSync(path, "utf8");
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    onError?.(new Error(`projects.json at ${path} is malformed (${err.message}); falling back to empty project map.`));
-    return { ...DEFAULT_MAP, projects: {} };
-  }
-  if (!parsed.defaultMemoryDb) parsed.defaultMemoryDb = "claude_memory";
-  if (!parsed.projects) parsed.projects = {};
-  return parsed;
+function captureLogPath() {
+  return join2(configDir(), "capture.log");
 }
 
 // src/config.ts
-import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, writeFileSync, renameSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, chmodSync } from "node:fs";
 import { dirname, join as join3 } from "node:path";
 var DEFAULTS = {
   httpUri: "http://localhost:2480",
@@ -171,9 +131,9 @@ function envFilePath() {
   return join3(configDir(), ".env");
 }
 function readEnvFile(path = envFilePath()) {
-  if (!existsSync2(path)) return {};
+  if (!existsSync(path)) return {};
   const map = {};
-  for (const line of readFileSync2(path, "utf8").split("\n")) {
+  for (const line of readFileSync(path, "utf8").split("\n")) {
     const t = line.trim();
     if (!t || t.startsWith("#")) continue;
     const eq = t.indexOf("=");
@@ -233,87 +193,175 @@ function toClientEnv(cfg) {
   return { httpUri: cfg.httpUri, username: cfg.username, password: cfg.password };
 }
 
-// src/memory-db.ts
-function resolveMemoryDb(cfg, map) {
-  return cfg.sources.memoryDb === "default" ? map.defaultMemoryDb : cfg.memoryDb;
+// src/lock.ts
+import { closeSync, openSync, readFileSync as readFileSync2, unlinkSync, writeSync } from "node:fs";
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function createLock(path) {
+  let fd;
+  try {
+    fd = openSync(path, "wx");
+  } catch {
+    return false;
+  }
+  try {
+    writeSync(fd, String(process.pid));
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+function acquireLock(path) {
+  if (createLock(path)) return true;
+  let pid = NaN;
+  try {
+    pid = Number(readFileSync2(path, "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (Number.isFinite(pid) && pid > 0 && pidAlive(pid)) return false;
+  try {
+    unlinkSync(path);
+  } catch {
+    return false;
+  }
+  return createLock(path);
 }
 
-// src/session-state.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync2 } from "node:fs";
-function readSessionState(claudeCodeSessionId) {
-  const path = sessionStatePath(claudeCodeSessionId);
-  if (!existsSync3(path)) return null;
+// src/embed.ts
+import { existsSync as existsSync2, closeSync as closeSync2, openSync as openSync2, statSync, mkdirSync as mkdirSync2, writeFileSync as writeFileSync2, unlinkSync as unlinkSync2 } from "node:fs";
+import { createRequire } from "node:module";
+import { join as join4 } from "node:path";
+import { pathToFileURL } from "node:url";
+var EMBED_MODEL = "Xenova/all-MiniLM-L6-v2";
+var EMBED_MAX_CHARS = 2e3;
+var INSTALL_STALE_MS = 30 * 60 * 1e3;
+function embedDir() {
+  return join4(configDir(), "embed");
+}
+function isEmbedInstalled(dir = embedDir()) {
+  return existsSync2(join4(dir, "node_modules", "@xenova", "transformers", "package.json"));
+}
+async function loadEmbedder(dir = embedDir()) {
+  if (!isEmbedInstalled(dir)) {
+    throw new Error(`embedding runtime not installed in ${dir} (run: arcadedb-skills embed install)`);
+  }
+  const req = createRequire(join4(dir, "package.json"));
+  const entry = req.resolve("@xenova/transformers");
+  const mod = await import(pathToFileURL(entry).href);
+  mod.env.cacheDir = join4(dir, "models");
+  mod.env.allowLocalModels = false;
+  const pipe = await mod.pipeline("feature-extraction", EMBED_MODEL, { quantized: true });
+  return async (texts) => {
+    if (texts.length === 0) return [];
+    const inputs = texts.map((t) => (t.length > EMBED_MAX_CHARS ? t.slice(0, EMBED_MAX_CHARS) : t) || " ");
+    const out = await pipe(inputs, { pooling: "mean", normalize: true });
+    const dims = out.dims[out.dims.length - 1] ?? EMBEDDING_DIMENSIONS;
+    const rows = [];
+    for (let i = 0; i < inputs.length; i++) {
+      rows.push(Array.from(out.data.subarray(i * dims, (i + 1) * dims)));
+    }
+    return rows;
+  };
+}
+
+// src/capture-log.ts
+import { appendFileSync, existsSync as existsSync3, mkdirSync as mkdirSync3 } from "node:fs";
+import { dirname as dirname2 } from "node:path";
+function logCapture(event, fields = {}) {
   try {
-    const raw = JSON.parse(readFileSync3(path, "utf8"));
-    return {
-      ...raw,
-      currentLine: raw.currentLine ?? 0,
-      lastExtractedLine: raw.lastExtractedLine ?? 0,
-      lastCapturedLine: raw.lastCapturedLine ?? raw.lastExtractedLine ?? 0,
-      extractInFlightSince: raw.extractInFlightSince ?? null
-    };
+    const path = captureLogPath();
+    if (!existsSync3(dirname2(path))) mkdirSync3(dirname2(path), { recursive: true });
+    appendFileSync(path, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
   } catch {
-    return null;
   }
 }
 
-// src/hook-input.ts
-import { readFileSync as readFileSync4 } from "node:fs";
-var KEYS2 = [
-  "session_id",
-  "transcript_path",
-  "cwd",
-  "hook_event_name",
-  "stop_hook_active",
-  "source",
-  "reason"
-];
-function parseHookInput(raw) {
-  if (!raw.trim()) return {};
-  let obj;
-  try {
-    obj = JSON.parse(raw);
-  } catch {
-    return {};
-  }
-  if (!obj || typeof obj !== "object") return {};
-  const out = {};
-  for (const k of KEYS2) {
-    const v = obj[k];
-    if (v !== void 0) out[k] = v;
-  }
-  return out;
+// src/embed-runner.ts
+var BATCH = 64;
+var TEXT_EXPR = {
+  Turn: "text",
+  Decision: "ifnull(summary, '') + ' ' + ifnull(rationale, '')",
+  Insight: "ifnull(topic, '') + ' ' + ifnull(text, '')",
+  Question: "ifnull(text, '')",
+  Answer: "ifnull(text, '')"
+};
+function flag(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  return i === -1 ? void 0 : argv[i + 1];
 }
-function readHookInput() {
-  try {
-    return parseHookInput(readFileSync4(0, "utf8"));
-  } catch {
-    return {};
+async function embedPending(client, db, embed, types = EMBEDDED_TYPES) {
+  let total = 0;
+  for (const type of types) {
+    const expr = TEXT_EXPR[type] ?? "text";
+    for (; ; ) {
+      const rows = await client.query(
+        db,
+        "sql",
+        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL LIMIT ${BATCH}`
+      );
+      if (rows.length === 0) break;
+      const vectors = await embed(rows.map((r) => r.body ?? ""));
+      for (let i = 0; i < rows.length; i++) {
+        const vec = vectors[i];
+        await client.execute(
+          db,
+          "sql",
+          `UPDATE ${rows[i].rid} SET embedding = [${vec.map((v) => v.toFixed(6)).join(",")}]`
+        );
+      }
+      total += rows.length;
+      if (rows.length < BATCH) break;
+    }
   }
+  return total;
 }
-
-// src/session-end.ts
 async function main() {
-  const input = readHookInput();
-  const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"];
-  if (!claudeCodeSessionId) return;
-  const state = readSessionState(claudeCodeSessionId);
-  if (!state) return;
-  const map = loadProjects(projectsJsonPath(), logError);
-  const cfg = resolveConfig();
-  const client = new Client(toClientEnv(cfg));
-  await endSession(client, resolveMemoryDb(cfg, map), state.sessionDbId);
-}
-function logError(err) {
+  const db = flag(process.argv, "db");
+  if (!db) {
+    console.error("usage: embed-runner --db <name>");
+    process.exit(2);
+  }
+  if (!isEmbedInstalled()) {
+    logCapture("embed_skip", { reason: "not_installed", db });
+    return;
+  }
+  const lock = join5(configDir(), "embed.lock");
+  if (!acquireLock(lock)) {
+    logCapture("embed_skip", { reason: "locked", db });
+    return;
+  }
+  const started = Date.now();
   try {
-    const path = hookErrorLogPath();
-    if (!existsSync4(dirname2(path))) mkdirSync3(dirname2(path), { recursive: true });
-    appendFileSync(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] session-end: ${err?.message ?? String(err)}
-`);
-  } catch {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg), { timeoutMs: 3e4 });
+    const embed = await loadEmbedder();
+    const n = await embedPending(client, db, embed);
+    if (n > 0) logCapture("embed_done", { db, embedded: n, ms: Date.now() - started });
+  } catch (err) {
+    logCapture("embed_failed", { db, error: err?.message ?? String(err) });
+    process.exitCode = 1;
+  } finally {
+    try {
+      unlinkSync3(lock);
+    } catch {
+    }
   }
 }
-main().catch((err) => {
-  logError(err);
-  process.exit(0);
-});
+var isEntry = process.argv[1] !== void 0 && /embed-runner\.(?:js|ts)$/.test(process.argv[1]);
+if (isEntry) {
+  main().catch((err) => {
+    logCapture("embed_failed", { error: err?.message ?? String(err) });
+    process.exit(1);
+  });
+}
+export {
+  TEXT_EXPR,
+  embedPending
+};

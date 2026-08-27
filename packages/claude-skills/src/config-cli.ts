@@ -8,6 +8,7 @@ import { projectsJsonPath } from "./env-paths.js";
 import { removeProject } from "./auto-register.js";
 import { staleEditsSince, stalePath } from "./index-need.js";
 import { runnerPath, runnerArgv } from "./index-spawn.js";
+import { embedStatus } from "./embed.js";
 
 type Io = { out: (s: string) => void; err?: (s: string) => void };
 
@@ -17,7 +18,11 @@ const SET_KEYS: Record<string, { env: string; validate: (v: string) => string | 
   password: { env: "ARCADEDB_ROOT_PASSWORD", validate: v => v ? null : "expected a non-empty password" },
   "memory-db": { env: "ARCADEDB_MEMORY_DB", validate: v => /^[a-z][a-z0-9_]*$/.test(v) ? null : "expected [a-z][a-z0-9_]*" },
   "auto-index": { env: "ARCADEDB_AUTO_INDEX", validate: v => v === "on" || v === "off" ? null : "expected on or off" },
+  capture: { env: "ARCADEDB_CAPTURE", validate: v => v === "on" || v === "off" ? null : "expected on or off" },
+  embed: { env: "ARCADEDB_EMBED", validate: v => v === "on" || v === "off" ? null : "expected on or off" },
+  extractor: { env: "ARCADEDB_EXTRACTOR", validate: v => v === "off" || v === "live" || v === "dryrun" ? null : "expected off, live or dryrun" },
 };
+export const SET_KEY_NAMES = Object.keys(SET_KEYS).join("|");
 
 function pad(s: string, n: number): string {
   return s.padEnd(n);
@@ -33,6 +38,9 @@ export async function configShow(io: Io): Promise<number> {
   io.out(`  ${pad("password:", 12)}${pad(cfg.password ? "********" : "(not set)", 24)}(${cfg.sources.password})`);
   io.out(`  ${pad("memory-db:", 12)}${pad(memoryDb, 24)}(${cfg.sources.memoryDb})`);
   io.out(`  ${pad("auto-index:", 12)}${pad(cfg.autoIndex ? "on" : "off", 24)}(${cfg.sources.autoIndex})`);
+  io.out(`  ${pad("capture:", 12)}${pad(cfg.capture ? "on" : "off", 24)}(${cfg.sources.capture})`);
+  io.out(`  ${pad("embed:", 12)}${pad(cfg.embed ? `on, runtime ${embedStatus()}` : "off", 24)}(${cfg.sources.embed})`);
+  io.out(`  ${pad("extractor:", 12)}${pad(cfg.extractor, 24)}(${cfg.sources.extractor})`);
   const probe = await probeServer(toClientEnv(cfg));
   const bannerLines = probeBanner(probe, cfg.username);
   io.out(probe.status === "ok" ? bannerLines[0]!.replace(/^ {2}/, "") : bannerLines[0]!);
@@ -48,7 +56,7 @@ export async function configShow(io: Io): Promise<number> {
 export function configSet(key: string, value: string, io: Io): number {
   const spec = SET_KEYS[key];
   if (!spec) {
-    io.err?.(`unknown key: ${key} (server|user|password|memory-db|auto-index)`);
+    io.err?.(`unknown key: ${key} (${SET_KEY_NAMES})`);
     return 1;
   }
   if (/[\n\r]/.test(value)) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/session-start.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync7, mkdirSync as mkdirSync5 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync8, mkdirSync as mkdirSync6 } from "node:fs";
 import { dirname as dirname6 } from "node:path";
 import { execSync as execSync2 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -118,6 +118,12 @@ var coreSchema = {
 };
 
 // src/agent-memory/schemas/memory.ts
+var EMBEDDING_DIMENSIONS = 384;
+var embedding = {
+  name: "embedding",
+  type: "ARRAY_OF_FLOATS",
+  vectorIndex: { dimensions: EMBEDDING_DIMENSIONS, similarity: "COSINE" }
+};
 var memorySchema = {
   name: "memory",
   vertices: [
@@ -132,13 +138,27 @@ var memorySchema = {
       ]
     },
     {
+      name: "Turn",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "sessionId", type: "STRING", notNull: true },
+        { name: "idx", type: "INTEGER", notNull: true },
+        { name: "role", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "ts", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" },
+        embedding
+      ]
+    },
+    {
       name: "Decision",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "summary", type: "STRING", notNull: true },
         { name: "rationale", type: "STRING" },
         { name: "decidedAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -148,7 +168,8 @@ var memorySchema = {
         { name: "topic", type: "STRING", notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "createdAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -157,7 +178,8 @@ var memorySchema = {
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "askedAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -166,7 +188,8 @@ var memorySchema = {
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "answeredAt", type: "DATETIME", notNull: true },
-        { name: "confidence", type: "FLOAT" }
+        { name: "confidence", type: "FLOAT" },
+        embedding
       ]
     }
   ],
@@ -345,6 +368,10 @@ function renderProperty(typeName, p) {
   if (p.primaryKey) {
     stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) UNIQUE`);
   }
+  if (p.vectorIndex) {
+    const meta = JSON.stringify({ dimensions: p.vectorIndex.dimensions, similarity: p.vectorIndex.similarity });
+    stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) LSM_VECTOR METADATA ${meta}`);
+  }
   return stmts;
 }
 
@@ -432,14 +459,20 @@ var DEFAULTS = {
   httpUri: "http://localhost:2480",
   username: "root",
   memoryDb: "claude_memory",
-  autoIndex: true
+  autoIndex: true,
+  capture: true,
+  embed: true,
+  extractor: "off"
 };
 var KEYS = {
   httpUri: "ARCADEDB_HTTP_URI",
   username: "ARCADEDB_USERNAME",
   password: "ARCADEDB_ROOT_PASSWORD",
   memoryDb: "ARCADEDB_MEMORY_DB",
-  autoIndex: "ARCADEDB_AUTO_INDEX"
+  autoIndex: "ARCADEDB_AUTO_INDEX",
+  capture: "ARCADEDB_CAPTURE",
+  embed: "ARCADEDB_EMBED",
+  extractor: "ARCADEDB_EXTRACTOR"
 };
 var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
@@ -495,19 +528,30 @@ function resolveConfig(opts = {}) {
     memoryDb.source = "default";
   }
   const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
+  const captureRaw = pick(KEYS.capture, processEnv, file, DEFAULTS.capture ? "on" : "off");
+  const embedRaw = pick(KEYS.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
+  const extractorRaw = pick(KEYS.extractor, processEnv, file, DEFAULTS.extractor);
+  const extractorMode = extractorRaw.value.toLowerCase();
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
     password: password.value,
     memoryDb: memoryDb.value,
     autoIndex: autoIndexRaw.value.toLowerCase() !== "off",
+    capture: captureRaw.value.toLowerCase() !== "off",
+    embed: embedRaw.value.toLowerCase() !== "off",
+    // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
+    extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
     envPath,
     sources: {
       httpUri: httpUri.source,
       username: username.source,
       password: password.source,
       memoryDb: memoryDb.source,
-      autoIndex: autoIndexRaw.source
+      autoIndex: autoIndexRaw.source,
+      capture: captureRaw.source,
+      embed: embedRaw.source,
+      extractor: extractorRaw.source
     }
   };
 }
@@ -713,12 +757,18 @@ function buildContext(input) {
   lines.push(
     `  Memory DB: ${input.memory.db} (${input.memory.decisionCount} decisions, ${input.memory.insightCount} insights)`
   );
+  lines.push(captureLine(input.capture ?? true, input.embed ?? "off"));
   lines.push(extractorLine(input.extractorMode));
   return lines.join("\n");
 }
+function captureLine(capture, embed) {
+  if (!capture) return "  Capture: off (ARCADEDB_CAPTURE=on to log every prompt and answer as :Turn)";
+  const search = embed === "ready" ? "semantic search ready: arcadedb-skills search <query>" : embed === "installing" ? "embedding runtime installing in background, search available next session" : embed === "missing" ? "embedding runtime missing, run: arcadedb-skills embed install" : "embeddings off (ARCADEDB_EMBED=on for semantic search)";
+  return `  Capture: on (every prompt/answer logged as :Turn, no LLM; ${search})`;
+}
 function extractorLine(extractorMode) {
-  const mode = (extractorMode ?? "live").toLowerCase();
-  return mode === "off" ? "  LLM extractor: off (set ARCADEDB_EXTRACTOR=live or dryrun to capture)" : mode === "dryrun" ? "  LLM extractor: dryrun (JSONL audit only; set ARCADEDB_EXTRACTOR=live to write the graph)" : "  LLM extractor: live (capturing decisions/insights/Q&A into claude_memory; ARCADEDB_EXTRACTOR=off to disable)";
+  const mode = (extractorMode ?? "off").toLowerCase();
+  return mode === "off" ? "  LLM extractor: off (ARCADEDB_EXTRACTOR=live to distill decisions/insights with a subagent; costs tokens per run)" : mode === "dryrun" ? "  LLM extractor: dryrun (JSONL audit only; set ARCADEDB_EXTRACTOR=live to write the graph)" : "  LLM extractor: live (distilling decisions/insights/Q&A into claude_memory every 10 turns or 15 min; ARCADEDB_EXTRACTOR=off to disable)";
 }
 
 // src/session-state.ts
@@ -732,7 +782,9 @@ function readSessionState(claudeCodeSessionId) {
     return {
       ...raw,
       currentLine: raw.currentLine ?? 0,
-      lastExtractedLine: raw.lastExtractedLine ?? 0
+      lastExtractedLine: raw.lastExtractedLine ?? 0,
+      lastCapturedLine: raw.lastCapturedLine ?? raw.lastExtractedLine ?? 0,
+      extractInFlightSince: raw.extractInFlightSince ?? null
     };
   } catch {
     return null;
@@ -828,17 +880,17 @@ import { closeSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename as basename3, dirname as dirname4, join as join6 } from "node:path";
 import { fileURLToPath } from "node:url";
-function resolveRunner(here, pluginRoot) {
-  if (pluginRoot) return join6(pluginRoot, "hooks", "index-runner.js");
-  if (here.endsWith(".ts")) return join6(dirname4(here), "index-runner.ts");
+function resolveRunner(here, pluginRoot, name = "index-runner") {
+  if (pluginRoot) return join6(pluginRoot, "hooks", `${name}.js`);
+  if (here.endsWith(".ts")) return join6(dirname4(here), `${name}.ts`);
   const dir = dirname4(here);
   if (basename3(dir) === "src" && basename3(dirname4(dir)) === "dist") {
-    return join6(dir, "..", "..", "hooks", "index-runner.js");
+    return join6(dir, "..", "..", "hooks", `${name}.js`);
   }
-  return join6(dir, "index-runner.js");
+  return join6(dir, `${name}.js`);
 }
-function runnerPath() {
-  return resolveRunner(fileURLToPath(import.meta.url), process.env["CLAUDE_PLUGIN_ROOT"] || void 0);
+function runnerPath(name = "index-runner") {
+  return resolveRunner(fileURLToPath(import.meta.url), process.env["CLAUDE_PLUGIN_ROOT"] || void 0, name);
 }
 function runnerArgv(runner, args) {
   const argv = runner.endsWith(".ts") ? [createRequire(import.meta.url).resolve("tsx/cli"), runner] : [runner];
@@ -861,13 +913,89 @@ function spawnIndexer(args) {
   }
 }
 
+// src/embed-spawn.ts
+import { spawn as spawn2 } from "node:child_process";
+import { closeSync as closeSync2, openSync as openSync2 } from "node:fs";
+import { join as join7 } from "node:path";
+function spawnEmbedRunner(args) {
+  try {
+    const runner = args.runner ?? runnerPath("embed-runner");
+    const log = openSync2(join7(configDir(), "embed.log"), "a");
+    const argv = runnerArgv(runner, ["--db", args.db]);
+    const child = spawn2(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
+    closeSync2(log);
+    child.unref();
+    return child.pid ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// src/embed.ts
+import { existsSync as existsSync6, closeSync as closeSync3, openSync as openSync3, statSync, mkdirSync as mkdirSync4, writeFileSync as writeFileSync4, unlinkSync } from "node:fs";
+import { spawn as spawn3 } from "node:child_process";
+import { join as join8 } from "node:path";
+var EMBED_PACKAGE = "@xenova/transformers@2";
+var INSTALL_STALE_MS = 30 * 60 * 1e3;
+function embedDir() {
+  return join8(configDir(), "embed");
+}
+function embedInstallLock() {
+  return join8(embedDir(), "install.lock");
+}
+function isEmbedInstalled(dir = embedDir()) {
+  return existsSync6(join8(dir, "node_modules", "@xenova", "transformers", "package.json"));
+}
+function isEmbedInstalling(lock = embedInstallLock(), now = Date.now()) {
+  try {
+    return now - statSync(lock).mtimeMs < INSTALL_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+function embedStatus(dir = embedDir()) {
+  if (isEmbedInstalled(dir)) return "ready";
+  return isEmbedInstalling(join8(dir, "install.lock")) ? "installing" : "missing";
+}
+function spawnEmbedInstall(dir = embedDir()) {
+  if (isEmbedInstalled(dir)) return null;
+  const lock = join8(dir, "install.lock");
+  if (isEmbedInstalling(lock)) return null;
+  try {
+    mkdirSync4(dir, { recursive: true });
+    if (!existsSync6(join8(dir, "package.json"))) {
+      writeFileSync4(join8(dir, "package.json"), JSON.stringify({ name: "arcadedb-embed", private: true }, null, 2) + "\n");
+    }
+    writeFileSync4(lock, String(process.pid));
+    const log = openSync3(join8(dir, "install.log"), "a");
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const child = spawn3(npm, ["install", "--no-audit", "--no-fund", "--loglevel=error", EMBED_PACKAGE], {
+      cwd: dir,
+      detached: true,
+      stdio: ["ignore", log, log],
+      env: process.env
+    });
+    closeSync3(log);
+    child.on("exit", () => {
+      try {
+        unlinkSync(lock);
+      } catch {
+      }
+    });
+    child.unref();
+    return child.pid ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // src/capture-log.ts
-import { appendFileSync, existsSync as existsSync6, mkdirSync as mkdirSync4 } from "node:fs";
+import { appendFileSync, existsSync as existsSync7, mkdirSync as mkdirSync5 } from "node:fs";
 import { dirname as dirname5 } from "node:path";
 function logCapture(event, fields = {}) {
   try {
     const path = captureLogPath();
-    if (!existsSync6(dirname5(path))) mkdirSync4(dirname5(path), { recursive: true });
+    if (!existsSync7(dirname5(path))) mkdirSync5(dirname5(path), { recursive: true });
     appendFileSync(path, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
   } catch {
   }
@@ -950,7 +1078,19 @@ async function main() {
     if (indexing) projectCtx.indexing = true;
   }
   const memoryCtx = await probeMemory(client, memoryDb);
-  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, extractorMode: process.env["ARCADEDB_EXTRACTOR"], serverLine }) + "\n");
+  let embed = "off";
+  if (cfg.embed) {
+    let status = embedStatus();
+    if (status === "missing") {
+      const pid = spawnEmbedInstall();
+      logCapture("embed_install_spawned", { pid });
+      if (pid) status = "installing";
+    } else if (status === "ready") {
+      spawnEmbedRunner({ db: memoryDb });
+    }
+    embed = status;
+  }
+  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, capture: cfg.capture, embed, extractorMode: cfg.extractor, serverLine }) + "\n");
   if (project) {
     const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID2()}`;
     await tryStartSession(client, memoryDb, project.key, cwd, claudeCodeSessionId, input.transcript_path).catch((err) => logError(err));
@@ -977,7 +1117,9 @@ async function tryStartSession(client, memoryDb, repo, cwd, claudeCodeSessionId,
     lastExtractedTurnIdx: 0,
     lastExtractedAt: now,
     currentLine: seedLine,
-    lastExtractedLine: seedLine
+    lastExtractedLine: seedLine,
+    lastCapturedLine: seedLine,
+    extractInFlightSince: null
   });
   if (previousSessionId) {
     await linkFollows(client, memoryDb, newSessionId, previousSessionId);
@@ -1025,7 +1167,7 @@ function safeGitRemote(cwd) {
 function logError(err) {
   try {
     const path = hookErrorLogPath();
-    if (!existsSync7(dirname6(path))) mkdirSync5(dirname6(path), { recursive: true });
+    if (!existsSync8(dirname6(path))) mkdirSync6(dirname6(path), { recursive: true });
     appendFileSync2(path, `[${(/* @__PURE__ */ new Date()).toISOString()}] session-start: ${err?.message ?? String(err)}
 `);
   } catch {

@@ -14,6 +14,10 @@ export interface SessionState {
   lastExtractedAt: string;
   currentLine: number;
   lastExtractedLine: number;
+  /** Last transcript line written to the graph as :Turn nodes (raw capture, no LLM). */
+  lastCapturedLine: number;
+  /** Set when the Stop hook asks for an extraction; cleared by markExtracted. Prevents overlapping runs. */
+  extractInFlightSince: string | null;
 }
 
 export function readSessionState(claudeCodeSessionId: string): SessionState | null {
@@ -25,6 +29,8 @@ export function readSessionState(claudeCodeSessionId: string): SessionState | nu
       ...(raw as SessionState),
       currentLine: raw.currentLine ?? 0,
       lastExtractedLine: raw.lastExtractedLine ?? 0,
+      lastCapturedLine: raw.lastCapturedLine ?? raw.lastExtractedLine ?? 0,
+      extractInFlightSince: raw.extractInFlightSince ?? null,
     };
   } catch {
     return null;
@@ -53,6 +59,23 @@ export function markExtracted(claudeCodeSessionId: string, turnIdx: number, line
   state.lastExtractedTurnIdx = turnIdx;
   if (lineIdx !== undefined) state.lastExtractedLine = lineIdx;
   state.lastExtractedAt = new Date().toISOString();
+  state.extractInFlightSince = null;
+  writeSessionState(state);
+  return state;
+}
+
+export function markExtractInFlight(claudeCodeSessionId: string, now: Date = new Date()): SessionState | null {
+  const state = readSessionState(claudeCodeSessionId);
+  if (!state) return null;
+  state.extractInFlightSince = now.toISOString();
+  writeSessionState(state);
+  return state;
+}
+
+export function markCaptured(claudeCodeSessionId: string, lineIdx: number): SessionState | null {
+  const state = readSessionState(claudeCodeSessionId);
+  if (!state) return null;
+  state.lastCapturedLine = lineIdx;
   writeSessionState(state);
   return state;
 }

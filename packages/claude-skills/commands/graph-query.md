@@ -11,12 +11,17 @@ Run a query against the ArcadeDB graph. Accepts either a natural-language questi
 ## Behavior
 
 1. If the argument starts with `MATCH`, `CREATE`, `RETURN`, or other Cypher keywords, treat as raw Cypher.
-2. Otherwise, translate the question to Cypher using the schema cheat-sheet from `arcadedb-graph` skill.
-3. Determine the target DB:
+2. If the question is about past conversation by meaning ("what did we say about X", "have we discussed Y", "how did we solve Z last time", anything fuzzy), use semantic search instead of Cypher:
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/hooks/cli.js search "<question>" --limit 10
+   ```
+   Add `--types Turn` for raw conversation only, `--types Decision,Insight` for distilled notes, `--repo <name>` to scope. Exit code 2 means the embedding runtime is not ready yet (`embed status` / `embed install`); say so and fall back to Cypher over `Turn.text CONTAINS`.
+3. Otherwise, translate the question to Cypher using the schema cheat-sheet from `arcadedb-graph` skill.
+4. Determine the target DB:
    - For code-intelligence questions ("what calls", "what imports", "files in"), use the project DB from SessionStart context.
    - For memory questions ("decisions about", "have we tried"), use `claude_memory`.
-4. Execute via the MCP server (preferred) or shell+curl fallback (see `arcadedb-graph` skill).
-5. Return the result. If empty, say so explicitly; do not fabricate.
+5. Execute via the MCP server (preferred) or shell+curl fallback (see `arcadedb-graph` skill).
+6. Return the result. If empty, say so explicitly; do not fabricate.
 
 ## Examples
 

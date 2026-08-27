@@ -5,6 +5,23 @@ entries; write new ADRs in `decisions/` to supersede past decisions.
 
 ---
 
+## 2026-08-27 - Session: Raw capture, local vectors (0.9.0)
+
+**Topic:** The user asked why the plugin spends tokens summarising instead of
+logging everything and searching by meaning. It did not match the goal.
+
+**Built:** `:Turn` raw capture in the Stop hook; `src/embed.ts` with lazy
+background install of transformers.js; `hooks/embed-runner.js`; `LSM_VECTOR`
+cosine index on `embedding` of Turn/Decision/Insight/Question/Answer;
+`arcadedb-skills search` and `embed install|status|run`; extractor default off
+with an in-flight guard; `/graph-query` semantic mode.
+
+**Decided:**
+- Extractor stays available but opt-in. Raw turns are the source of truth.
+- Embedding runtime lives outside the plugin (native deps, 260 MB); the plugin
+  installs it once per machine and degrades to "search not ready" until then.
+- Brute-force cosine over the vector column for now; `vectorNeighbors()` later.
+
 ## 2026-08-27 - Session: Plug-and-play (0.7.0)
 
 **Topic:** Removed every remaining manual setup step so a fresh repo works with

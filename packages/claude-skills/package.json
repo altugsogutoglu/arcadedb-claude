@@ -1,6 +1,6 @@
 {
   "name": "arcadedb-claude-skills",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Claude Code plugin for ArcadeDB: zero-config graph context per project, agent memory (decisions/insights/sessions), code indexer, Obsidian vault sync, slash commands. One package, pre-bundled hooks.",
   "license": "MIT",
   "type": "module",
@@ -25,9 +25,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/bin/*.js && npm run bundle:hooks",
-    "bundle:hooks": "esbuild src/session-start.ts src/post-tool-use.ts src/session-end.ts src/stop.ts --bundle --platform=node --target=node20 --format=esm --outdir=hooks && esbuild bin/arcadedb-skills.ts --bundle --platform=node --target=node20 --format=esm --outfile=hooks/cli.js && esbuild src/index-runner.ts --bundle --platform=node --target=node20 --format=esm --outfile=hooks/index-runner.js && chmod +x hooks/session-start.js hooks/post-tool-use.js hooks/session-end.js hooks/stop.js hooks/cli.js hooks/index-runner.js",
+    "bundle:hooks": "esbuild src/session-start.ts src/post-tool-use.ts src/session-end.ts src/stop.ts --bundle --platform=node --target=node20 --format=esm --outdir=hooks && esbuild bin/arcadedb-skills.ts --bundle --platform=node --target=node20 --format=esm --outfile=hooks/cli.js && esbuild src/index-runner.ts --bundle --platform=node --target=node20 --format=esm --outfile=hooks/index-runner.js && esbuild src/embed-runner.ts --bundle --platform=node --target=node20 --format=esm --outfile=hooks/embed-runner.js && chmod +x hooks/session-start.js hooks/post-tool-use.js hooks/session-end.js hooks/stop.js hooks/cli.js hooks/index-runner.js hooks/embed-runner.js",
     "test": "vitest run",
-    "test:unit": "vitest run --exclude tests/session-start.test.ts --exclude tests/post-tool-use.test.ts --exclude tests/capture-e2e.test.ts --exclude tests/session-end.test.ts --exclude tests/index-runner.test.ts --exclude 'tests/*/cli/**' --exclude tests/agent-memory/cli-dryrun-review.test.ts --exclude 'tests/*/writer.test.ts' --exclude tests/code-indexer/indexer.test.ts --exclude tests/obsidian-sync/syncer.test.ts --exclude 'tests/agent-memory/{memory,migrations}/**' --exclude tests/agent-memory/client.test.ts",
+    "test:unit": "vitest run --exclude tests/session-start.test.ts --exclude tests/post-tool-use.test.ts --exclude tests/capture-e2e.test.ts --exclude tests/session-end.test.ts --exclude tests/index-runner.test.ts --exclude tests/turn-capture-live.test.ts --exclude 'tests/*/cli/**' --exclude tests/agent-memory/cli-dryrun-review.test.ts --exclude 'tests/*/writer.test.ts' --exclude tests/code-indexer/indexer.test.ts --exclude tests/obsidian-sync/syncer.test.ts --exclude 'tests/agent-memory/{memory,migrations}/**' --exclude tests/agent-memory/client.test.ts",
     "test:watch": "vitest"
   },
   "engines": {

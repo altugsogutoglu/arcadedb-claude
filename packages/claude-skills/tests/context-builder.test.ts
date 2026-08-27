@@ -58,13 +58,14 @@ describe("buildContext", () => {
     expect(text).toMatch(/not indexed yet/i);
   });
 
-  it("shows live capture by default (mode undefined)", () => {
+  it("shows the extractor off by default (mode undefined)", () => {
     const out = buildContext({
       project: null,
       memory: { db: "claude_memory", decisionCount: 0, insightCount: 0 },
       extractorMode: undefined,
     });
-    expect(out).toContain("LLM extractor: live");
+    expect(out).toContain("LLM extractor: off");
+    expect(out).toContain("Capture: on");
   });
 
   it("shows dryrun when mode=dryrun", () => {

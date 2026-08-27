@@ -42,6 +42,8 @@ describe("session-state", () => {
       lastExtractedAt: "2026-05-17T12:00:00.000Z",
       currentLine: 0,
       lastExtractedLine: 0,
+      lastCapturedLine: 0,
+      extractInFlightSince: null,
     };
     writeSessionState(state);
     const read = readSessionState("cc-abc");
@@ -61,6 +63,8 @@ describe("session-state", () => {
       lastExtractedAt: "2026-05-17T12:00:00.000Z",
       currentLine: 0,
       lastExtractedLine: 0,
+      lastCapturedLine: 0,
+      extractInFlightSince: null,
     });
     expect(existsSync(join(tmpHome, ".config", "arcadedb", "sessions", "cc-xyz.json"))).toBe(true);
   });
@@ -78,6 +82,8 @@ describe("session-state", () => {
       lastExtractedAt: "2026-05-17T12:00:00.000Z",
       currentLine: 0,
       lastExtractedLine: 0,
+      lastCapturedLine: 0,
+      extractInFlightSince: null,
     };
     writeSessionState(original);
     const updated: SessionState = { ...original, currentTurnIdx: 5, lastExtractedTurnIdx: 3 };
@@ -98,6 +104,8 @@ describe("session-state", () => {
       lastExtractedAt: "2026-05-17T12:00:00.000Z",
       currentLine: 0,
       lastExtractedLine: 0,
+      lastCapturedLine: 0,
+      extractInFlightSince: null,
     });
     // corrupt the file
     const path = join(tmpHome, ".config", "arcadedb", "sessions", "cc-bad.json");
@@ -121,6 +129,8 @@ describe("incrementTurn", () => {
       lastExtractedAt: "2026-05-19T10:00:00.000Z",
       currentLine: 0,
       lastExtractedLine: 0,
+      lastCapturedLine: 0,
+      extractInFlightSince: null,
     });
     const next = incrementTurn(claudeCodeSessionId);
     expect(next?.currentTurnIdx).toBe(5);
@@ -144,6 +154,8 @@ describe("incrementTurn", () => {
       lastExtractedAt: "2026-05-19T10:00:00.000Z",
       currentLine: 0,
       lastExtractedLine: 0,
+      lastCapturedLine: 0,
+      extractInFlightSince: null,
     });
     incrementTurn(claudeCodeSessionId);
     const re = readSessionState(claudeCodeSessionId);
@@ -166,6 +178,8 @@ describe("markExtracted", () => {
       lastExtractedAt: "2026-05-19T10:00:00.000Z",
       currentLine: 0,
       lastExtractedLine: 0,
+      lastCapturedLine: 0,
+      extractInFlightSince: null,
     });
     const updated = markExtracted(claudeCodeSessionId, 10);
     expect(updated?.lastExtractedTurnIdx).toBe(10);
@@ -193,7 +207,7 @@ describe("markExtracted", () => {
     writeSessionState({
       claudeCodeSessionId: "ln-1", sessionDbId: "db", repo: "r", cwd: "/r", userName: "u",
       startedAt: "2026-01-01T00:00:00.000Z", currentTurnIdx: 0, lastExtractedTurnIdx: 0,
-      lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 0, lastExtractedLine: 0,
+      lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 0, lastExtractedLine: 0, lastCapturedLine: 0, extractInFlightSince: null,
     });
     const s = incrementTurn("ln-1", 42);
     expect(s?.currentTurnIdx).toBe(1);
@@ -204,7 +218,7 @@ describe("markExtracted", () => {
     writeSessionState({
       claudeCodeSessionId: "ln-2", sessionDbId: "db", repo: "r", cwd: "/r", userName: "u",
       startedAt: "2026-01-01T00:00:00.000Z", currentTurnIdx: 5, lastExtractedTurnIdx: 0,
-      lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 90, lastExtractedLine: 0,
+      lastExtractedAt: "2026-01-01T00:00:00.000Z", currentLine: 90, lastExtractedLine: 0, lastCapturedLine: 0, extractInFlightSince: null,
     });
     const s = markExtracted("ln-2", 5, 90);
     expect(s?.lastExtractedTurnIdx).toBe(5);

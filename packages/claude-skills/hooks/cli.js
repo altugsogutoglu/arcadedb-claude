@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // bin/arcadedb-skills.ts
-import { readFileSync as readFileSync6, writeFileSync as writeFileSync4, mkdirSync as mkdirSync6, existsSync as existsSync8 } from "node:fs";
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync5, mkdirSync as mkdirSync7, existsSync as existsSync9 } from "node:fs";
 import { dirname as dirname7 } from "node:path";
 
 // src/agent-memory/errors.ts
@@ -116,6 +116,13 @@ var coreSchema = {
 };
 
 // src/agent-memory/schemas/memory.ts
+var EMBEDDING_DIMENSIONS = 384;
+var EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer"];
+var embedding = {
+  name: "embedding",
+  type: "ARRAY_OF_FLOATS",
+  vectorIndex: { dimensions: EMBEDDING_DIMENSIONS, similarity: "COSINE" }
+};
 var memorySchema = {
   name: "memory",
   vertices: [
@@ -130,13 +137,27 @@ var memorySchema = {
       ]
     },
     {
+      name: "Turn",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "sessionId", type: "STRING", notNull: true },
+        { name: "idx", type: "INTEGER", notNull: true },
+        { name: "role", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "ts", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" },
+        embedding
+      ]
+    },
+    {
       name: "Decision",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "summary", type: "STRING", notNull: true },
         { name: "rationale", type: "STRING" },
         { name: "decidedAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -146,7 +167,8 @@ var memorySchema = {
         { name: "topic", type: "STRING", notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "createdAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -155,7 +177,8 @@ var memorySchema = {
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "askedAt", type: "DATETIME", notNull: true },
-        { name: "repo", type: "STRING" }
+        { name: "repo", type: "STRING" },
+        embedding
       ]
     },
     {
@@ -164,7 +187,8 @@ var memorySchema = {
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
         { name: "text", type: "STRING", notNull: true },
         { name: "answeredAt", type: "DATETIME", notNull: true },
-        { name: "confidence", type: "FLOAT" }
+        { name: "confidence", type: "FLOAT" },
+        embedding
       ]
     }
   ],
@@ -321,10 +345,44 @@ var allSchemas = {
 function quote(v) {
   return '"' + String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 }
-function propsClause(label, props, naturalKeys) {
+function naturalKey(label, naturalKeys) {
   const key = (naturalKeys[label] ?? [])[0];
   if (!key) throw new Error(`no natural key for label ${label}`);
+  return key;
+}
+function propsClause(label, props, naturalKeys) {
+  const key = naturalKey(label, naturalKeys);
   return `{${key}:${quote(props[key])}}`;
+}
+var CREATED_AT = {
+  Decision: "decidedAt",
+  Insight: "createdAt",
+  Question: "askedAt",
+  Answer: "answeredAt"
+};
+function literal(v) {
+  if (v === null || v === void 0) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "boolean") return String(v);
+  if (typeof v === "string") return quote(v);
+  return null;
+}
+function setProps(alias, label, props, naturalKeys) {
+  const key = naturalKey(label, naturalKeys);
+  const parts = [];
+  for (const [k, v] of Object.entries(props)) {
+    if (k === key) continue;
+    const lit = literal(v);
+    if (lit === null) continue;
+    parts.push(`${alias}.${k} = ${lit}`);
+  }
+  return parts.length ? `
+SET ${parts.join(",\n    ")}` : "";
+}
+function onCreate(alias, label, props) {
+  const ts = CREATED_AT[label];
+  const extra = ts && props[ts] === void 0 ? `, ${alias}.${ts} = datetime()` : "";
+  return `ON CREATE SET ${alias}.firstSeenAt = datetime()${extra}`;
 }
 function buildExtractorCypher(args) {
   const { triple, sessionDbId, naturalKeys } = args;
@@ -333,9 +391,9 @@ function buildExtractorCypher(args) {
   const conf = triple.confidence != null ? `,
                 r.confidence = ${triple.confidence}` : "";
   return `MERGE (s:${triple.subject.label} ${sub})
-  ON CREATE SET s.firstSeenAt = datetime()
+  ${onCreate("s", triple.subject.label, triple.subject.props)}${setProps("s", triple.subject.label, triple.subject.props, naturalKeys)}
 MERGE (o:${triple.object.label} ${obj})
-  ON CREATE SET o.firstSeenAt = datetime()
+  ${onCreate("o", triple.object.label, triple.object.props)}${setProps("o", triple.object.label, triple.object.props, naturalKeys)}
 MERGE (s)-[r:${triple.verb}]->(o)
   ON CREATE SET r.firstAt = datetime(),
                 r.session = ${quote(sessionDbId)},
@@ -385,7 +443,9 @@ function readSessionState(claudeCodeSessionId) {
     return {
       ...raw,
       currentLine: raw.currentLine ?? 0,
-      lastExtractedLine: raw.lastExtractedLine ?? 0
+      lastExtractedLine: raw.lastExtractedLine ?? 0,
+      lastCapturedLine: raw.lastCapturedLine ?? raw.lastExtractedLine ?? 0,
+      extractInFlightSince: raw.extractInFlightSince ?? null
     };
   } catch {
     return null;
@@ -403,6 +463,7 @@ function markExtracted(claudeCodeSessionId, turnIdx, lineIdx) {
   state.lastExtractedTurnIdx = turnIdx;
   if (lineIdx !== void 0) state.lastExtractedLine = lineIdx;
   state.lastExtractedAt = (/* @__PURE__ */ new Date()).toISOString();
+  state.extractInFlightSince = null;
   writeSessionState(state);
   return state;
 }
@@ -613,14 +674,20 @@ var DEFAULTS = {
   httpUri: "http://localhost:2480",
   username: "root",
   memoryDb: "claude_memory",
-  autoIndex: true
+  autoIndex: true,
+  capture: true,
+  embed: true,
+  extractor: "off"
 };
 var KEYS = {
   httpUri: "ARCADEDB_HTTP_URI",
   username: "ARCADEDB_USERNAME",
   password: "ARCADEDB_ROOT_PASSWORD",
   memoryDb: "ARCADEDB_MEMORY_DB",
-  autoIndex: "ARCADEDB_AUTO_INDEX"
+  autoIndex: "ARCADEDB_AUTO_INDEX",
+  capture: "ARCADEDB_CAPTURE",
+  embed: "ARCADEDB_EMBED",
+  extractor: "ARCADEDB_EXTRACTOR"
 };
 var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
@@ -667,19 +734,30 @@ function resolveConfig(opts = {}) {
     memoryDb.source = "default";
   }
   const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
+  const captureRaw = pick(KEYS.capture, processEnv, file, DEFAULTS.capture ? "on" : "off");
+  const embedRaw = pick(KEYS.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
+  const extractorRaw = pick(KEYS.extractor, processEnv, file, DEFAULTS.extractor);
+  const extractorMode = extractorRaw.value.toLowerCase();
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
     password: password.value,
     memoryDb: memoryDb.value,
     autoIndex: autoIndexRaw.value.toLowerCase() !== "off",
+    capture: captureRaw.value.toLowerCase() !== "off",
+    embed: embedRaw.value.toLowerCase() !== "off",
+    // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
+    extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
     envPath,
     sources: {
       httpUri: httpUri.source,
       username: username.source,
       password: password.source,
       memoryDb: memoryDb.source,
-      autoIndex: autoIndexRaw.source
+      autoIndex: autoIndexRaw.source,
+      capture: captureRaw.source,
+      embed: embedRaw.source,
+      extractor: extractorRaw.source
     }
   };
 }
@@ -912,22 +990,106 @@ function staleEditsSince(path, key, since) {
 import { createRequire } from "node:module";
 import { basename as basename3, dirname as dirname6, join as join6 } from "node:path";
 import { fileURLToPath } from "node:url";
-function resolveRunner(here, pluginRoot) {
-  if (pluginRoot) return join6(pluginRoot, "hooks", "index-runner.js");
-  if (here.endsWith(".ts")) return join6(dirname6(here), "index-runner.ts");
+function resolveRunner(here, pluginRoot, name = "index-runner") {
+  if (pluginRoot) return join6(pluginRoot, "hooks", `${name}.js`);
+  if (here.endsWith(".ts")) return join6(dirname6(here), `${name}.ts`);
   const dir = dirname6(here);
   if (basename3(dir) === "src" && basename3(dirname6(dir)) === "dist") {
-    return join6(dir, "..", "..", "hooks", "index-runner.js");
+    return join6(dir, "..", "..", "hooks", `${name}.js`);
   }
-  return join6(dir, "index-runner.js");
+  return join6(dir, `${name}.js`);
 }
-function runnerPath() {
-  return resolveRunner(fileURLToPath(import.meta.url), process.env["CLAUDE_PLUGIN_ROOT"] || void 0);
+function runnerPath(name = "index-runner") {
+  return resolveRunner(fileURLToPath(import.meta.url), process.env["CLAUDE_PLUGIN_ROOT"] || void 0, name);
 }
 function runnerArgv(runner, args) {
   const argv = runner.endsWith(".ts") ? [createRequire(import.meta.url).resolve("tsx/cli"), runner] : [runner];
   argv.push(...args);
   return argv;
+}
+
+// src/embed.ts
+import { existsSync as existsSync8, closeSync, openSync, statSync, mkdirSync as mkdirSync6, writeFileSync as writeFileSync4, unlinkSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createRequire as createRequire2 } from "node:module";
+import { join as join7 } from "node:path";
+import { pathToFileURL } from "node:url";
+var EMBED_PACKAGE = "@xenova/transformers@2";
+var EMBED_MODEL = "Xenova/all-MiniLM-L6-v2";
+var EMBED_MAX_CHARS = 2e3;
+var INSTALL_STALE_MS = 30 * 60 * 1e3;
+function embedDir() {
+  return join7(configDir(), "embed");
+}
+function embedInstallLock() {
+  return join7(embedDir(), "install.lock");
+}
+function isEmbedInstalled(dir = embedDir()) {
+  return existsSync8(join7(dir, "node_modules", "@xenova", "transformers", "package.json"));
+}
+function isEmbedInstalling(lock = embedInstallLock(), now = Date.now()) {
+  try {
+    return now - statSync(lock).mtimeMs < INSTALL_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+function embedStatus(dir = embedDir()) {
+  if (isEmbedInstalled(dir)) return "ready";
+  return isEmbedInstalling(join7(dir, "install.lock")) ? "installing" : "missing";
+}
+function spawnEmbedInstall(dir = embedDir()) {
+  if (isEmbedInstalled(dir)) return null;
+  const lock = join7(dir, "install.lock");
+  if (isEmbedInstalling(lock)) return null;
+  try {
+    mkdirSync6(dir, { recursive: true });
+    if (!existsSync8(join7(dir, "package.json"))) {
+      writeFileSync4(join7(dir, "package.json"), JSON.stringify({ name: "arcadedb-embed", private: true }, null, 2) + "\n");
+    }
+    writeFileSync4(lock, String(process.pid));
+    const log = openSync(join7(dir, "install.log"), "a");
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const child = spawn(npm, ["install", "--no-audit", "--no-fund", "--loglevel=error", EMBED_PACKAGE], {
+      cwd: dir,
+      detached: true,
+      stdio: ["ignore", log, log],
+      env: process.env
+    });
+    closeSync(log);
+    child.on("exit", () => {
+      try {
+        unlinkSync(lock);
+      } catch {
+      }
+    });
+    child.unref();
+    return child.pid ?? null;
+  } catch {
+    return null;
+  }
+}
+async function loadEmbedder(dir = embedDir()) {
+  if (!isEmbedInstalled(dir)) {
+    throw new Error(`embedding runtime not installed in ${dir} (run: arcadedb-skills embed install)`);
+  }
+  const req = createRequire2(join7(dir, "package.json"));
+  const entry = req.resolve("@xenova/transformers");
+  const mod = await import(pathToFileURL(entry).href);
+  mod.env.cacheDir = join7(dir, "models");
+  mod.env.allowLocalModels = false;
+  const pipe = await mod.pipeline("feature-extraction", EMBED_MODEL, { quantized: true });
+  return async (texts) => {
+    if (texts.length === 0) return [];
+    const inputs = texts.map((t) => (t.length > EMBED_MAX_CHARS ? t.slice(0, EMBED_MAX_CHARS) : t) || " ");
+    const out = await pipe(inputs, { pooling: "mean", normalize: true });
+    const dims = out.dims[out.dims.length - 1] ?? EMBEDDING_DIMENSIONS;
+    const rows = [];
+    for (let i = 0; i < inputs.length; i++) {
+      rows.push(Array.from(out.data.subarray(i * dims, (i + 1) * dims)));
+    }
+    return rows;
+  };
 }
 
 // src/config-cli.ts
@@ -936,8 +1098,12 @@ var SET_KEYS = {
   user: { env: "ARCADEDB_USERNAME", validate: (v) => v.trim() ? null : "expected a user name" },
   password: { env: "ARCADEDB_ROOT_PASSWORD", validate: (v) => v ? null : "expected a non-empty password" },
   "memory-db": { env: "ARCADEDB_MEMORY_DB", validate: (v) => /^[a-z][a-z0-9_]*$/.test(v) ? null : "expected [a-z][a-z0-9_]*" },
-  "auto-index": { env: "ARCADEDB_AUTO_INDEX", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" }
+  "auto-index": { env: "ARCADEDB_AUTO_INDEX", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" },
+  capture: { env: "ARCADEDB_CAPTURE", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" },
+  embed: { env: "ARCADEDB_EMBED", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" },
+  extractor: { env: "ARCADEDB_EXTRACTOR", validate: (v) => v === "off" || v === "live" || v === "dryrun" ? null : "expected off, live or dryrun" }
 };
+var SET_KEY_NAMES = Object.keys(SET_KEYS).join("|");
 function pad(s, n) {
   return s.padEnd(n);
 }
@@ -951,6 +1117,9 @@ async function configShow(io) {
   io.out(`  ${pad("password:", 12)}${pad(cfg.password ? "********" : "(not set)", 24)}(${cfg.sources.password})`);
   io.out(`  ${pad("memory-db:", 12)}${pad(memoryDb, 24)}(${cfg.sources.memoryDb})`);
   io.out(`  ${pad("auto-index:", 12)}${pad(cfg.autoIndex ? "on" : "off", 24)}(${cfg.sources.autoIndex})`);
+  io.out(`  ${pad("capture:", 12)}${pad(cfg.capture ? "on" : "off", 24)}(${cfg.sources.capture})`);
+  io.out(`  ${pad("embed:", 12)}${pad(cfg.embed ? `on, runtime ${embedStatus()}` : "off", 24)}(${cfg.sources.embed})`);
+  io.out(`  ${pad("extractor:", 12)}${pad(cfg.extractor, 24)}(${cfg.sources.extractor})`);
   const probe = await probeServer(toClientEnv(cfg));
   const bannerLines = probeBanner(probe, cfg.username);
   io.out(probe.status === "ok" ? bannerLines[0].replace(/^ {2}/, "") : bannerLines[0]);
@@ -965,7 +1134,7 @@ async function configShow(io) {
 function configSet(key, value, io) {
   const spec = SET_KEYS[key];
   if (!spec) {
-    io.err?.(`unknown key: ${key} (server|user|password|memory-db|auto-index)`);
+    io.err?.(`unknown key: ${key} (${SET_KEY_NAMES})`);
     return 1;
   }
   if (/[\n\r]/.test(value)) {
@@ -1021,8 +1190,173 @@ async function configIndex(keyArg, cwd, io) {
   return r.status ?? 1;
 }
 
-// bin/arcadedb-skills.ts
+// src/embed-runner.ts
+import { unlinkSync as unlinkSync3 } from "node:fs";
+import { join as join8 } from "node:path";
+
+// src/lock.ts
+import { closeSync as closeSync2, openSync as openSync2, readFileSync as readFileSync6, unlinkSync as unlinkSync2, writeSync } from "node:fs";
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function createLock(path) {
+  let fd;
+  try {
+    fd = openSync2(path, "wx");
+  } catch {
+    return false;
+  }
+  try {
+    writeSync(fd, String(process.pid));
+  } finally {
+    closeSync2(fd);
+  }
+  return true;
+}
+function acquireLock(path) {
+  if (createLock(path)) return true;
+  let pid = NaN;
+  try {
+    pid = Number(readFileSync6(path, "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (Number.isFinite(pid) && pid > 0 && pidAlive(pid)) return false;
+  try {
+    unlinkSync2(path);
+  } catch {
+    return false;
+  }
+  return createLock(path);
+}
+
+// src/embed-runner.ts
+var BATCH = 64;
+var TEXT_EXPR = {
+  Turn: "text",
+  Decision: "ifnull(summary, '') + ' ' + ifnull(rationale, '')",
+  Insight: "ifnull(topic, '') + ' ' + ifnull(text, '')",
+  Question: "ifnull(text, '')",
+  Answer: "ifnull(text, '')"
+};
 function flag(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  return i === -1 ? void 0 : argv[i + 1];
+}
+async function embedPending(client, db, embed, types = EMBEDDED_TYPES) {
+  let total = 0;
+  for (const type of types) {
+    const expr = TEXT_EXPR[type] ?? "text";
+    for (; ; ) {
+      const rows = await client.query(
+        db,
+        "sql",
+        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL LIMIT ${BATCH}`
+      );
+      if (rows.length === 0) break;
+      const vectors = await embed(rows.map((r) => r.body ?? ""));
+      for (let i = 0; i < rows.length; i++) {
+        const vec = vectors[i];
+        await client.execute(
+          db,
+          "sql",
+          `UPDATE ${rows[i].rid} SET embedding = [${vec.map((v) => v.toFixed(6)).join(",")}]`
+        );
+      }
+      total += rows.length;
+      if (rows.length < BATCH) break;
+    }
+  }
+  return total;
+}
+async function main() {
+  const db = flag(process.argv, "db");
+  if (!db) {
+    console.error("usage: embed-runner --db <name>");
+    process.exit(2);
+  }
+  if (!isEmbedInstalled()) {
+    logCapture("embed_skip", { reason: "not_installed", db });
+    return;
+  }
+  const lock = join8(configDir(), "embed.lock");
+  if (!acquireLock(lock)) {
+    logCapture("embed_skip", { reason: "locked", db });
+    return;
+  }
+  const started = Date.now();
+  try {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg), { timeoutMs: 3e4 });
+    const embed = await loadEmbedder();
+    const n = await embedPending(client, db, embed);
+    if (n > 0) logCapture("embed_done", { db, embedded: n, ms: Date.now() - started });
+  } catch (err) {
+    logCapture("embed_failed", { db, error: err?.message ?? String(err) });
+    process.exitCode = 1;
+  } finally {
+    try {
+      unlinkSync3(lock);
+    } catch {
+    }
+  }
+}
+var isEntry = process.argv[1] !== void 0 && /embed-runner\.(?:js|ts)$/.test(process.argv[1]);
+if (isEntry) {
+  main().catch((err) => {
+    logCapture("embed_failed", { error: err?.message ?? String(err) });
+    process.exit(1);
+  });
+}
+
+// src/search.ts
+var AT_EXPR = {
+  Turn: "ts",
+  Decision: "decidedAt",
+  Insight: "createdAt",
+  Question: "askedAt",
+  Answer: "answeredAt"
+};
+async function semanticSearch(client, db, embed, query, opts = {}) {
+  const limit = opts.limit ?? 10;
+  const types = opts.types ?? EMBEDDED_TYPES;
+  const [vec] = await embed([query]);
+  const literal2 = `[${vec.map((v) => v.toFixed(6)).join(",")}]`;
+  const hits = [];
+  for (const type of types) {
+    const repoClause = opts.repo ? ` AND repo = '${opts.repo.replace(/'/g, "\\'")}'` : "";
+    const rows = await client.query(
+      db,
+      "sql",
+      `SELECT @rid AS rid, ${TEXT_EXPR[type]} AS body, repo, ${AT_EXPR[type]} AS at, ${type === "Turn" ? "sessionId" : "null"} AS sessionId,
+              vectorCosineSimilarity(embedding, ${literal2}) AS score
+       FROM ${type} WHERE embedding IS NOT NULL${repoClause}
+       ORDER BY score DESC LIMIT ${limit}`
+    );
+    for (const r of rows) {
+      hits.push({ type, score: r.score, text: r.body ?? "", repo: r.repo ?? null, at: r.at ?? null, sessionId: r.sessionId ?? null, rid: r.rid });
+    }
+  }
+  hits.sort((a, b) => b.score - a.score);
+  return hits.slice(0, limit);
+}
+function formatHits(hits, maxChars = 400) {
+  if (hits.length === 0) return "no matches (nothing embedded yet, or embeddings still running)";
+  return hits.map((h, i) => {
+    const text = h.text.length > maxChars ? h.text.slice(0, maxChars) + "..." : h.text;
+    const meta = [h.type, h.repo, h.at ? h.at.slice(0, 16) : null].filter(Boolean).join(" | ");
+    return `${i + 1}. [${h.score.toFixed(3)}] ${meta}
+   ${text.replace(/\n/g, "\n   ")}`;
+  }).join("\n");
+}
+
+// bin/arcadedb-skills.ts
+function flag2(argv, name) {
   const i = argv.indexOf(`--${name}`);
   return i === -1 ? void 0 : argv[i + 1];
 }
@@ -1032,17 +1366,20 @@ function usage() {
   console.error("  mark-extracted --session <id> --turn <n>   update session state after extractor finishes");
   console.error("  extractor-prompt                           print the extractor system prompt");
   console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>]");
-  console.error("  config show | set <server|user|password|memory-db|auto-index> <value> | test | forget <key> [--drop-db] | index [<key>]");
+  console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
+  console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]   semantic search over captured memory");
+  console.error("  embed install | status | run              manage the local embedding runtime");
+  console.error("  extract-replay <sessionDbId|audit.jsonl>  re-write a session's audited triples into the graph (repairs nodes written without text)");
 }
-async function main() {
+async function main2() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (!cmd) {
     usage();
     return 1;
   }
   if (cmd === "mark-extracted") {
-    const session = flag(rest, "session");
-    const turnArg = flag(rest, "turn");
+    const session = flag2(rest, "session");
+    const turnArg = flag2(rest, "turn");
     const turn = Number(turnArg);
     if (!session || turnArg === void 0 || !Number.isFinite(turn)) {
       console.error("usage: arcadedb-skills mark-extracted --session <id> --turn <n>");
@@ -1056,22 +1393,125 @@ async function main() {
     console.error(`no state file for session ${session}`);
     return 1;
   }
+  if (cmd === "search") {
+    const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1].startsWith("--") && rest[i - 1] !== "--json"));
+    const query = positional.join(" ").trim();
+    if (!query) {
+      console.error("usage: arcadedb-skills search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]");
+      return 1;
+    }
+    if (embedStatus() !== "ready") {
+      console.error(`embedding runtime not ready (${embedStatus()}); run: arcadedb-skills embed install`);
+      return 2;
+    }
+    const limit = Number(flag2(rest, "limit") ?? 10);
+    const typesArg = flag2(rest, "types");
+    const types = typesArg ? typesArg.split(",").map((t) => t.trim()).filter((t) => EMBEDDED_TYPES.includes(t)) : void 0;
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const embed = await loadEmbedder();
+    const hits = await semanticSearch(client, db, embed, query, { limit: Number.isFinite(limit) ? limit : 10, types, repo: flag2(rest, "repo") });
+    console.log(rest.includes("--json") ? JSON.stringify(hits, null, 2) : formatHits(hits));
+    return 0;
+  }
+  if (cmd === "embed") {
+    const sub = rest[0];
+    if (sub === "status") {
+      console.log(`embedding runtime: ${embedStatus()} (${embedDir()})`);
+      return 0;
+    }
+    if (sub === "install") {
+      const status = embedStatus();
+      if (status === "ready") {
+        console.log("embedding runtime already installed");
+        return 0;
+      }
+      const pid = spawnEmbedInstall();
+      console.log(pid ? `installing @xenova/transformers into ${embedDir()} in the background (pid ${pid}); check: arcadedb-skills embed status` : status === "installing" ? "install already running" : "could not start npm install (is npm on PATH?)");
+      return pid || status === "installing" ? 0 : 1;
+    }
+    if (sub === "run") {
+      if (embedStatus() !== "ready") {
+        console.error(`embedding runtime not ready (${embedStatus()})`);
+        return 2;
+      }
+      const cfg = resolveConfig();
+      const client = new Client(toClientEnv(cfg), { timeoutMs: 3e4 });
+      const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+      const n = await embedPending(client, db, await loadEmbedder());
+      console.log(`embedded ${n} node(s) in ${db}`);
+      return 0;
+    }
+    console.error("usage: arcadedb-skills embed <install|status|run>");
+    return 1;
+  }
+  if (cmd === "extract-replay") {
+    const target = rest[0];
+    if (!target) {
+      console.error("usage: arcadedb-skills extract-replay <sessionDbId|path/to/audit.jsonl>");
+      return 1;
+    }
+    const auditPath = existsSync9(target) ? target : dryrunPath(target);
+    if (!existsSync9(auditPath)) {
+      console.error(`no audit file at ${auditPath}`);
+      return 1;
+    }
+    const triples = [];
+    let sessionDbId = flag2(rest, "session");
+    for (const line of readFileSync7(auditPath, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry.kind === "batch" && entry.sessionDbId && !sessionDbId) sessionDbId = entry.sessionDbId;
+      if (entry.kind === "triple" && entry.triple) triples.push(entry.triple);
+    }
+    if (!sessionDbId) sessionDbId = target.replace(/^.*\//, "").replace(/\.jsonl$/, "");
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const result = await executeLiveBatch(triples, {
+      execute: (d, cypher) => client.execute(d, "cypher", cypher),
+      memoryDb: db,
+      naturalKeys: buildVocabSnapshot().naturalKeys,
+      sessionDbId
+    });
+    let cleared = 0;
+    for (const t of triples) {
+      for (const node of [t.subject, t.object]) {
+        if (!EMBEDDED_TYPES.includes(node.label)) continue;
+        const id = node.props["id"];
+        if (typeof id !== "string") continue;
+        await client.execute(db, "cypher", `MATCH (n:${node.label} {id: '${id.replace(/'/g, "\\'")}'}) SET n.embedding = null`);
+        cleared += 1;
+      }
+    }
+    let embedded = 0;
+    if (cfg.embed && embedStatus() === "ready") embedded = await embedPending(client, db, await loadEmbedder());
+    logCapture("replay", { sessionDbId, db, audit: auditPath, ...result, cleared, embedded });
+    console.log(JSON.stringify({ sessionDbId, db, triples: triples.length, written: result.written, failed: result.failed, embedded, errors: result.errors.slice(0, 3) }));
+    return result.failed ? 1 : 0;
+  }
   if (cmd === "extractor-prompt") {
     process.stdout.write(buildExtractorSystemPrompt(buildVocabSnapshot()));
     return 0;
   }
   if (cmd === "extract-write") {
-    const rawFile = flag(rest, "raw");
-    const sessionDbId = flag(rest, "session");
-    const ccSession = flag(rest, "cc-session");
-    const turns = flag(rest, "turns");
-    const mode = (flag(rest, "mode") ?? "live").toLowerCase();
+    const rawFile = flag2(rest, "raw");
+    const sessionDbId = flag2(rest, "session");
+    const ccSession = flag2(rest, "cc-session");
+    const turns = flag2(rest, "turns");
+    const mode = (flag2(rest, "mode") ?? "live").toLowerCase();
     if (!rawFile || !sessionDbId || !ccSession || !turns) {
       console.error("usage: arcadedb-skills extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun>");
       return 1;
     }
-    const lines = flag(rest, "lines");
-    const turnArg = flag(rest, "turn");
+    const lines = flag2(rest, "lines");
+    const turnArg = flag2(rest, "turn");
     const turn = turnArg === void 0 ? void 0 : Number(turnArg);
     const lineEnd = lines ? Number(lines.split("..")[1]) : void 0;
     const markIfRequested = () => {
@@ -1079,13 +1519,13 @@ async function main() {
         markExtracted(ccSession, turn, Number.isFinite(lineEnd) ? lineEnd : void 0);
       }
     };
-    const raw = readFileSync6(rawFile, "utf8");
+    const raw = readFileSync7(rawFile, "utf8");
     const vocab = buildVocabSnapshot();
     const result = validateExtraction(raw, vocab);
     if (!result.ok) {
       const path = extractorErrorsPath(sessionDbId, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"));
-      if (!existsSync8(dirname7(path))) mkdirSync6(dirname7(path), { recursive: true });
-      writeFileSync4(path, `validation failed: ${result.reason}
+      if (!existsSync9(dirname7(path))) mkdirSync7(dirname7(path), { recursive: true });
+      writeFileSync5(path, `validation failed: ${result.reason}
 
 ${raw}`);
       logCapture("validation_failed", { session: ccSession, sessionDbId, reason: result.reason });
@@ -1154,7 +1594,7 @@ ${live.errors.join("\n")}`);
       case "set": {
         const [key, ...valueParts] = args;
         if (!key || valueParts.length === 0) {
-          console.error("usage: arcadedb-skills config set <server|user|password|memory-db|auto-index> <value>");
+          console.error(`usage: arcadedb-skills config set <${SET_KEY_NAMES}> <value>`);
           return 1;
         }
         const code = configSet(key, valueParts.join(" "), io);
@@ -1184,7 +1624,7 @@ ${live.errors.join("\n")}`);
   usage();
   return 1;
 }
-main().then((c) => process.exit(c)).catch((e) => {
+main2().then((c) => process.exit(c)).catch((e) => {
   console.error(e);
   process.exit(1);
 });

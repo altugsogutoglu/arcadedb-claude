@@ -1,4 +1,16 @@
-import type { Schema } from "./types.js";
+import type { PropertyDef, Schema } from "./types.js";
+
+export const EMBEDDING_DIMENSIONS = 384;
+
+/** Types that carry a searchable `embedding`; the embed runner fills it in the background. */
+export const EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer"] as const;
+export type EmbeddedType = (typeof EMBEDDED_TYPES)[number];
+
+const embedding: PropertyDef = {
+  name: "embedding",
+  type: "ARRAY_OF_FLOATS",
+  vectorIndex: { dimensions: EMBEDDING_DIMENSIONS, similarity: "COSINE" },
+};
 
 export const memorySchema: Schema = {
   name: "memory",
@@ -14,6 +26,19 @@ export const memorySchema: Schema = {
       ],
     },
     {
+      name: "Turn",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "sessionId", type: "STRING", notNull: true },
+        { name: "idx", type: "INTEGER", notNull: true },
+        { name: "role", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true },
+        { name: "ts", type: "DATETIME", notNull: true },
+        { name: "repo", type: "STRING" },
+        embedding,
+      ],
+    },
+    {
       name: "Decision",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
@@ -21,6 +46,7 @@ export const memorySchema: Schema = {
         { name: "rationale", type: "STRING" },
         { name: "decidedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
+        embedding,
       ],
     },
     {
@@ -31,6 +57,7 @@ export const memorySchema: Schema = {
         { name: "text", type: "STRING", notNull: true },
         { name: "createdAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
+        embedding,
       ],
     },
     {
@@ -40,6 +67,7 @@ export const memorySchema: Schema = {
         { name: "text", type: "STRING", notNull: true },
         { name: "askedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
+        embedding,
       ],
     },
     {
@@ -49,6 +77,7 @@ export const memorySchema: Schema = {
         { name: "text", type: "STRING", notNull: true },
         { name: "answeredAt", type: "DATETIME", notNull: true },
         { name: "confidence", type: "FLOAT" },
+        embedding,
       ],
     },
   ],

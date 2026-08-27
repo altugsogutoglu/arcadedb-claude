@@ -1,12 +1,12 @@
 ---
-description: "Show or change ArcadeDB plugin settings (server, user, password, memory DB, auto-index), test the connection, forget a project, or index now. Everything else is automatic."
+description: "Show or change ArcadeDB plugin settings (server, user, password, memory DB, auto-index, capture, embed, extractor), test the connection, forget a project, or index now. Everything else is automatic."
 argument-hint: "[show | set <key> <value> | test | forget <project> [--drop-db] | index [<project>]]"
 allowed-tools: Bash
 ---
 
 # /arcadedb-config
 
-The only knob. Defaults: server `http://localhost:2480`, user `root`, memory DB `claude_memory`, auto-index on. Settings live in `~/.config/arcadedb/.env`; shell `ARCADEDB_*` variables override the file.
+The only knob. Defaults: server `http://localhost:2480`, user `root`, memory DB `claude_memory`, auto-index on, capture on, embed on, extractor off. Settings live in `~/.config/arcadedb/.env`; shell `ARCADEDB_*` variables override the file.
 
 Run the bundled CLI. `$ARGUMENTS` is passed through verbatim; with no arguments run `show`.
 
@@ -18,7 +18,7 @@ node "${CLAUDE_PLUGIN_ROOT}/hooks/cli.js" config ${ARGS:-show}
 ## Subcommands
 
 - `config show`: every setting with its source, server status, registered projects.
-- `config set server http://host:port`, `config set user <name>`, `config set password <pw>`, `config set memory-db <name>`, `config set auto-index on|off`. Server/user/password changes print the probe result.
+- `config set server http://host:port`, `config set user <name>`, `config set password <pw>`, `config set memory-db <name>`, `config set auto-index on|off`, `config set capture on|off`, `config set embed on|off`, `config set extractor off|live|dryrun`. Server/user/password changes print the probe result.
   A `set password` value goes through the shell, so it must not contain leading or trailing spaces, quotes, `$`, or backticks; for such a password, edit `~/.config/arcadedb/.env` directly instead.
 - `config test`: probe the server and print the result.
 - `config forget <project> [--drop-db]`: remove a project from the registry. Before passing `--drop-db`, confirm with the user; it deletes the project's graph database.

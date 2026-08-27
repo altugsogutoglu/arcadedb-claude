@@ -10,10 +10,15 @@ import { executeLiveBatch } from "../src/extract-write.js";
 import { loadProjects } from "../src/project-map.js";
 import { resolveConfig, toClientEnv } from "../src/config.js";
 import { resolveMemoryDb } from "../src/memory-db.js";
-import { projectsJsonPath, extractorErrorsPath } from "../src/env-paths.js";
+import { projectsJsonPath, extractorErrorsPath, dryrunPath } from "../src/env-paths.js";
+import type { Triple } from "../src/extractor-validator.js";
 import { buildExtractorSystemPrompt } from "../src/extractor-prompt.js";
 import { logCapture } from "../src/capture-log.js";
-import { configShow, configSet, configTest, configForget, configIndex } from "../src/config-cli.js";
+import { configShow, configSet, configTest, configForget, configIndex, SET_KEY_NAMES } from "../src/config-cli.js";
+import { embedStatus, embedDir, loadEmbedder, spawnEmbedInstall } from "../src/embed.js";
+import { embedPending } from "../src/embed-runner.js";
+import { semanticSearch, formatHits } from "../src/search.js";
+import { EMBEDDED_TYPES, type EmbeddedType } from "../src/agent-memory/index.js";
 
 function flag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -26,7 +31,10 @@ function usage(): void {
   console.error("  mark-extracted --session <id> --turn <n>   update session state after extractor finishes");
   console.error("  extractor-prompt                           print the extractor system prompt");
   console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>]");
-  console.error("  config show | set <server|user|password|memory-db|auto-index> <value> | test | forget <key> [--drop-db] | index [<key>]");
+  console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
+  console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]   semantic search over captured memory");
+  console.error("  embed install | status | run              manage the local embedding runtime");
+  console.error("  extract-replay <sessionDbId|audit.jsonl>  re-write a session's audited triples into the graph (repairs nodes written without text)");
 }
 
 async function main(): Promise<number> {
@@ -52,6 +60,106 @@ async function main(): Promise<number> {
     }
     console.error(`no state file for session ${session}`);
     return 1;
+  }
+
+  if (cmd === "search") {
+    const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1]!.startsWith("--") && rest[i - 1] !== "--json"));
+    const query = positional.join(" ").trim();
+    if (!query) {
+      console.error("usage: arcadedb-skills search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]");
+      return 1;
+    }
+    if (embedStatus() !== "ready") {
+      console.error(`embedding runtime not ready (${embedStatus()}); run: arcadedb-skills embed install`);
+      return 2;
+    }
+    const limit = Number(flag(rest, "limit") ?? 10);
+    const typesArg = flag(rest, "types");
+    const types = typesArg
+      ? typesArg.split(",").map(t => t.trim()).filter((t): t is EmbeddedType => (EMBEDDED_TYPES as readonly string[]).includes(t))
+      : undefined;
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const embed = await loadEmbedder();
+    const hits = await semanticSearch(client, db, embed, query, { limit: Number.isFinite(limit) ? limit : 10, types, repo: flag(rest, "repo") });
+    console.log(rest.includes("--json") ? JSON.stringify(hits, null, 2) : formatHits(hits));
+    return 0;
+  }
+
+  if (cmd === "embed") {
+    const sub = rest[0];
+    if (sub === "status") {
+      console.log(`embedding runtime: ${embedStatus()} (${embedDir()})`);
+      return 0;
+    }
+    if (sub === "install") {
+      const status = embedStatus();
+      if (status === "ready") { console.log("embedding runtime already installed"); return 0; }
+      const pid = spawnEmbedInstall();
+      console.log(pid ? `installing @xenova/transformers into ${embedDir()} in the background (pid ${pid}); check: arcadedb-skills embed status`
+        : status === "installing" ? "install already running" : "could not start npm install (is npm on PATH?)");
+      return pid || status === "installing" ? 0 : 1;
+    }
+    if (sub === "run") {
+      if (embedStatus() !== "ready") { console.error(`embedding runtime not ready (${embedStatus()})`); return 2; }
+      const cfg = resolveConfig();
+      const client = new Client(toClientEnv(cfg), { timeoutMs: 30_000 });
+      const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+      const n = await embedPending(client, db, await loadEmbedder());
+      console.log(`embedded ${n} node(s) in ${db}`);
+      return 0;
+    }
+    console.error("usage: arcadedb-skills embed <install|status|run>");
+    return 1;
+  }
+
+  if (cmd === "extract-replay") {
+    const target = rest[0];
+    if (!target) {
+      console.error("usage: arcadedb-skills extract-replay <sessionDbId|path/to/audit.jsonl>");
+      return 1;
+    }
+    const auditPath = existsSync(target) ? target : dryrunPath(target);
+    if (!existsSync(auditPath)) {
+      console.error(`no audit file at ${auditPath}`);
+      return 1;
+    }
+    const triples: Triple[] = [];
+    let sessionDbId = flag(rest, "session");
+    for (const line of readFileSync(auditPath, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      let entry: { kind?: string; triple?: Triple; sessionDbId?: string };
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry.kind === "batch" && entry.sessionDbId && !sessionDbId) sessionDbId = entry.sessionDbId;
+      if (entry.kind === "triple" && entry.triple) triples.push(entry.triple);
+    }
+    if (!sessionDbId) sessionDbId = target.replace(/^.*\//, "").replace(/\.jsonl$/, "");
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const result = await executeLiveBatch(triples, {
+      execute: (d, cypher) => client.execute(d, "cypher", cypher),
+      memoryDb: db,
+      naturalKeys: buildVocabSnapshot().naturalKeys,
+      sessionDbId,
+    });
+    // Text may have changed under an existing embedding: clear it so the runner recomputes.
+    let cleared = 0;
+    for (const t of triples) {
+      for (const node of [t.subject, t.object]) {
+        if (!(EMBEDDED_TYPES as readonly string[]).includes(node.label)) continue;
+        const id = node.props["id"];
+        if (typeof id !== "string") continue;
+        await client.execute(db, "cypher", `MATCH (n:${node.label} {id: '${id.replace(/'/g, "\\'")}'}) SET n.embedding = null`);
+        cleared += 1;
+      }
+    }
+    let embedded = 0;
+    if (cfg.embed && embedStatus() === "ready") embedded = await embedPending(client, db, await loadEmbedder());
+    logCapture("replay", { sessionDbId, db, audit: auditPath, ...result, cleared, embedded });
+    console.log(JSON.stringify({ sessionDbId, db, triples: triples.length, written: result.written, failed: result.failed, embedded, errors: result.errors.slice(0, 3) }));
+    return result.failed ? 1 : 0;
   }
 
   if (cmd === "extractor-prompt") {
@@ -160,7 +268,7 @@ async function main(): Promise<number> {
       case "set": {
         const [key, ...valueParts] = args;
         if (!key || valueParts.length === 0) {
-          console.error("usage: arcadedb-skills config set <server|user|password|memory-db|auto-index> <value>");
+          console.error(`usage: arcadedb-skills config set <${SET_KEY_NAMES}> <value>`);
           return 1;
         }
         const code = configSet(key, valueParts.join(" "), io);

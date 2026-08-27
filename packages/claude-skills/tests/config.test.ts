@@ -80,3 +80,23 @@ describe("env file", () => {
     expect(readdirSync(dir).filter(f => f.endsWith(".tmp"))).toEqual([]);
   });
 });
+
+describe("capture / embed / extractor keys", () => {
+  it("default to capture on, embed on, extractor off", () => {
+    const cfg = resolveConfig({ envPath: "/nonexistent/.env", processEnv: {} });
+    expect(cfg.capture).toBe(true);
+    expect(cfg.embed).toBe(true);
+    expect(cfg.extractor).toBe("off");
+    expect(cfg.sources.extractor).toBe("default");
+  });
+
+  it("accept on/off and live|dryrun|on, and never let a typo turn the extractor on", () => {
+    const cfg = resolveConfig({ envPath: "/nonexistent/.env", processEnv: { ARCADEDB_CAPTURE: "off", ARCADEDB_EMBED: "OFF", ARCADEDB_EXTRACTOR: "Live" } });
+    expect(cfg.capture).toBe(false);
+    expect(cfg.embed).toBe(false);
+    expect(cfg.extractor).toBe("live");
+    expect(resolveConfig({ envPath: "/nonexistent/.env", processEnv: { ARCADEDB_EXTRACTOR: "on" } }).extractor).toBe("live");
+    expect(resolveConfig({ envPath: "/nonexistent/.env", processEnv: { ARCADEDB_EXTRACTOR: "dryrun" } }).extractor).toBe("dryrun");
+    expect(resolveConfig({ envPath: "/nonexistent/.env", processEnv: { ARCADEDB_EXTRACTOR: "yes" } }).extractor).toBe("off");
+  });
+});

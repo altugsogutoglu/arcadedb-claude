@@ -43,6 +43,8 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), "arcadedb-e2e-"));
   originalHome = process.env["HOME"];
   process.env["HOME"] = tmpHome;
+  // Never let a test session kick off the 260 MB embedding install.
+  process.env["ARCADEDB_EMBED"] = "off";
   const cfg = join(tmpHome, ".config", "arcadedb");
   mkdirSync(cfg, { recursive: true });
   if (!originalHome) throw new Error("HOME unset");
@@ -104,6 +106,9 @@ describe("capture end to end", () => {
 
     // 4. Node exists in graph
     const rows = await client.query<{ n: number }>(memoryDb.name, "cypher", 'MATCH (d:Decision {id: "e2e-dec-1"}) RETURN count(d) AS n');
+    const props = await client.query<{ s: string; r: string; t: unknown }>(memoryDb.name, "cypher", 'MATCH (d:Decision {id: "e2e-dec-1"}) RETURN d.summary AS s, d.rationale AS r, d.decidedAt AS t');
+    expect(props[0]).toMatchObject({ s: "Use stdin session id", r: "env var never set" });
+    expect(props[0]!.t).toBeTruthy();
     expect(rows[0]?.n).toBe(1);
 
     // 5. State advanced, next stop is not due

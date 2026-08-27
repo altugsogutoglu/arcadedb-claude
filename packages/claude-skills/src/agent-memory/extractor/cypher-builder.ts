@@ -14,10 +14,54 @@ function quote(v: unknown): string {
   return '"' + String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 }
 
-function propsClause(label: string, props: Record<string, unknown>, naturalKeys: Record<string, string[]>): string {
+function naturalKey(label: string, naturalKeys: Record<string, string[]>): string {
   const key = (naturalKeys[label] ?? [])[0];
   if (!key) throw new Error(`no natural key for label ${label}`);
+  return key;
+}
+
+function propsClause(label: string, props: Record<string, unknown>, naturalKeys: Record<string, string[]>): string {
+  const key = naturalKey(label, naturalKeys);
   return `{${key}:${quote(props[key])}}`;
+}
+
+/** Timestamp the schema expects on a note, filled with now() when the extractor did not supply it. */
+const CREATED_AT: Record<string, string> = {
+  Decision: "decidedAt",
+  Insight: "createdAt",
+  Question: "askedAt",
+  Answer: "answeredAt",
+};
+
+function literal(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "boolean") return String(v);
+  if (typeof v === "string") return quote(v);
+  return null;
+}
+
+/**
+ * `SET alias.prop = value` for every scalar prop except the natural key, so the node
+ * carries its text (summary, rationale, topic, text, ...) and not just its id.
+ * Applied on both create and match: a node first seen without text gets it later.
+ */
+function setProps(alias: string, label: string, props: Record<string, unknown>, naturalKeys: Record<string, string[]>): string {
+  const key = naturalKey(label, naturalKeys);
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(props)) {
+    if (k === key) continue;
+    const lit = literal(v);
+    if (lit === null) continue;
+    parts.push(`${alias}.${k} = ${lit}`);
+  }
+  return parts.length ? `\nSET ${parts.join(",\n    ")}` : "";
+}
+
+function onCreate(alias: string, label: string, props: Record<string, unknown>): string {
+  const ts = CREATED_AT[label];
+  const extra = ts && props[ts] === undefined ? `, ${alias}.${ts} = datetime()` : "";
+  return `ON CREATE SET ${alias}.firstSeenAt = datetime()${extra}`;
 }
 
 export function buildExtractorCypher(args: BuildArgs): string {
@@ -27,9 +71,9 @@ export function buildExtractorCypher(args: BuildArgs): string {
   const conf = triple.confidence != null ? `,\n                r.confidence = ${triple.confidence}` : "";
 
   return `MERGE (s:${triple.subject.label} ${sub})
-  ON CREATE SET s.firstSeenAt = datetime()
+  ${onCreate("s", triple.subject.label, triple.subject.props)}${setProps("s", triple.subject.label, triple.subject.props, naturalKeys)}
 MERGE (o:${triple.object.label} ${obj})
-  ON CREATE SET o.firstSeenAt = datetime()
+  ${onCreate("o", triple.object.label, triple.object.props)}${setProps("o", triple.object.label, triple.object.props, naturalKeys)}
 MERGE (s)-[r:${triple.verb}]->(o)
   ON CREATE SET r.firstAt = datetime(),
                 r.session = ${quote(sessionDbId)},

@@ -74,6 +74,8 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), "arcadedb-ss-home-"));
   originalHome = process.env["HOME"];
   process.env["HOME"] = tmpHome;
+  // Never let a test session kick off the 260 MB embedding install.
+  process.env["ARCADEDB_EMBED"] = "off";
   mkdirSync(join(tmpHome, ".config", "arcadedb"), { recursive: true });
 });
 

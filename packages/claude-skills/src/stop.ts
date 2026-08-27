@@ -2,12 +2,20 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hookErrorLogPath } from "./env-paths.js";
-import { incrementTurn } from "./session-state.js";
+import { Client } from "./agent-memory/index.js";
+import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
+import { incrementTurn, markCaptured, markExtractInFlight, type SessionState } from "./session-state.js";
 import { shouldExtract } from "./rate-limit.js";
-import { readHookInput } from "./hook-input.js";
+import { readHookInput, type HookInput } from "./hook-input.js";
 import { logCapture } from "./capture-log.js";
 import { countTranscriptLines } from "./transcript-lines.js";
+import { parseTranscriptTurns } from "./transcript-turns.js";
+import { writeTurns } from "./turn-capture.js";
+import { resolveConfig, toClientEnv, type ResolvedConfig } from "./config.js";
+import { loadProjects } from "./project-map.js";
+import { resolveMemoryDb } from "./memory-db.js";
+import { spawnEmbedRunner } from "./embed-spawn.js";
+import { isEmbedInstalled } from "./embed.js";
 
 function envInt(name: string, fallback: number): number {
   const v = process.env[name];
@@ -17,12 +25,10 @@ function envInt(name: string, fallback: number): number {
 }
 const DEFAULT_TURNS = envInt("ARCADEDB_EXTRACT_TURNS", 10);
 const DEFAULT_INTERVAL_MS = envInt("ARCADEDB_EXTRACT_INTERVAL_MS", 15 * 60 * 1000);
+/** An extraction older than this is assumed dead (subagent killed, session crashed) and may be re-requested. */
+export const EXTRACT_IN_FLIGHT_MAX_MS = 10 * 60 * 1000;
 
 async function main(): Promise<void> {
-  const mode = (process.env["ARCADEDB_EXTRACTOR"] ?? "live").toLowerCase();
-  if (mode === "off") { logCapture("skip", { reason: "off" }); return; }
-  const dispatchMode = mode === "dryrun" ? "dryrun" : "live";
-
   const input = readHookInput();
   if (input.stop_hook_active) { logCapture("skip", { reason: "stop_hook_active", session: input.session_id }); return; }
   if (!input.session_id) { logCapture("skip", { reason: "no_session_id" }); return; }
@@ -31,16 +37,56 @@ async function main(): Promise<void> {
   const state = incrementTurn(input.session_id, currentLine > 0 ? currentLine : undefined);
   if (!state) { logCapture("skip", { reason: "no_state", session: input.session_id }); return; }
 
-  const tripped = shouldExtract(
-    state,
-    { turns: DEFAULT_TURNS, intervalMs: DEFAULT_INTERVAL_MS },
-    new Date(),
-  );
-  if (!tripped) {
-    logCapture("skip", { reason: "not_due", session: input.session_id, turn: state.currentTurnIdx, line: currentLine });
-    return;
+  const cfg = resolveConfig();
+  const memoryDb = resolveMemoryDb(cfg, loadProjects(projectsJsonPath(), logError));
+
+  // 1. Raw capture: every prompt and answer becomes a :Turn. No model involved.
+  if (cfg.capture && input.transcript_path && state.currentLine > state.lastCapturedLine) {
+    await captureTurns(cfg, memoryDb, input, state);
   }
 
+  // 2. LLM extractor: opt-in, rate limited, never overlapping.
+  if (cfg.extractor === "off") { logCapture("skip", { reason: "extractor_off", session: input.session_id, turn: state.currentTurnIdx }); return; }
+  maybeRequestExtraction(cfg, input, state);
+}
+
+async function captureTurns(cfg: ResolvedConfig, memoryDb: string, input: HookInput, state: SessionState): Promise<void> {
+  const turns = parseTranscriptTurns(input.transcript_path!, state.lastCapturedLine + 1, state.currentLine);
+  if (turns.length === 0) {
+    markCaptured(state.claudeCodeSessionId, state.currentLine);
+    return;
+  }
+  try {
+    const client = new Client(toClientEnv(cfg));
+    await writeTurns(client, memoryDb, { sessionDbId: state.sessionDbId, repo: state.repo, turns });
+    markCaptured(state.claudeCodeSessionId, state.currentLine);
+    logCapture("turns_captured", { session: input.session_id, db: memoryDb, turns: turns.length, lines: `${state.lastCapturedLine + 1}..${state.currentLine}` });
+    if (cfg.embed && isEmbedInstalled()) {
+      const pid = spawnEmbedRunner({ db: memoryDb });
+      if (pid) logCapture("embed_spawned", { db: memoryDb, pid });
+    }
+  } catch (err) {
+    // Lines stay uncaptured and are retried on the next Stop; a server outage loses nothing.
+    logError(err);
+    logCapture("turns_capture_failed", { session: input.session_id, db: memoryDb, error: (err as Error)?.message ?? String(err) });
+  }
+}
+
+function maybeRequestExtraction(cfg: ResolvedConfig, input: HookInput, state: SessionState): void {
+  const now = new Date();
+  if (state.extractInFlightSince) {
+    const age = now.getTime() - new Date(state.extractInFlightSince).getTime();
+    if (Number.isFinite(age) && age < EXTRACT_IN_FLIGHT_MAX_MS) {
+      logCapture("skip", { reason: "extract_in_flight", session: input.session_id, since: state.extractInFlightSince });
+      return;
+    }
+  }
+
+  const tripped = shouldExtract(state, { turns: DEFAULT_TURNS, intervalMs: DEFAULT_INTERVAL_MS }, now);
+  if (!tripped) {
+    logCapture("skip", { reason: "not_due", session: input.session_id, turn: state.currentTurnIdx, line: state.currentLine });
+    return;
+  }
   if (state.currentLine <= state.lastExtractedLine) {
     logCapture("skip", { reason: "no_new_lines", session: input.session_id, line: state.currentLine });
     return;
@@ -51,6 +97,7 @@ async function main(): Promise<void> {
   const cliPath = root ? join(root, "hooks", "cli.js") : join(dirname(fileURLToPath(import.meta.url)), "cli.js");
   const cli = `node ${cliPath}`;
 
+  markExtractInFlight(state.claudeCodeSessionId, now);
   logCapture("trigger", { session: input.session_id, sessionDbId: state.sessionDbId, lines, turn: state.currentTurnIdx });
 
   process.stdout.write(JSON.stringify({
@@ -66,7 +113,7 @@ async function main(): Promise<void> {
       `- turn: ${state.currentTurnIdx}\n` +
       `- transcript_path: ${input.transcript_path ?? "(unavailable)"}\n` +
       `- cli: ${cli}\n` +
-      `- mode: ${dispatchMode}\n` +
+      `- mode: ${cfg.extractor}\n` +
       `Do not skip this. After the subagent reports back, resume the conversation.`,
   }) + "\n");
 }
