@@ -39,7 +39,7 @@ arcadedb-memory record-decision "${1:-$ARGUMENTS}" \
   --db claude_memory
 ```
 
-If `arcadedb-memory` is not on PATH, instruct the user to install `arcadedb-agent-memory` first.
+If `arcadedb-memory` is not on PATH, instruct the user to run `npm install -g arcadedb-claude-skills` first.
 
 ## Example
 

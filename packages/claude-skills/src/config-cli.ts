@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { Client } from "arcadedb-agent-memory";
+import { Client } from "./agent-memory/index.js";
 import { resolveConfig, toClientEnv, writeEnvFile } from "./config.js";
 import { probeServer, probeBanner } from "./server-probe.js";
 import { loadProjects, findProject } from "./project-map.js";

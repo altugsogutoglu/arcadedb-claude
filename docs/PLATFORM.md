@@ -10,7 +10,7 @@ Infrastructure and runtime notes.
 
 ## Distribution
 
-- npm: arcadedb-agent-memory, arcadedb-code-indexer, arcadedb-claude-skills, obsidian-to-arcadedb.
+- npm: arcadedb-claude-skills (single package since 0.8.0; arcadedb-agent-memory, arcadedb-code-indexer, obsidian-to-arcadedb are deprecated and frozen at their last versions).
 - npm publish needs OTP (2FA on account). Manual step.
 - Claude Code plugin installed from marketplace; note plugin dir may keep old version path (see claude-mem obs 60838).
 

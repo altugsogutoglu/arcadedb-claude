@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { buildExtractorCypher } from "arcadedb-agent-memory";
+import { buildExtractorCypher } from "./agent-memory/index.js";
 import { dryrunPath } from "./env-paths.js";
 import { buildVocabSnapshot } from "./vocab-snapshot.js";
 import type { Triple, InvalidTriple } from "./extractor-validator.js";

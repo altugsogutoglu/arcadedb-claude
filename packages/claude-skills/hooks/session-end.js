@@ -4,35 +4,35 @@
 import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync3 } from "node:fs";
 import { dirname as dirname2 } from "node:path";
 
-// ../agent-memory/dist/src/errors.js
+// src/agent-memory/errors.ts
 var ArcadeDBConnectionError = class extends Error {
-  uri;
-  cause;
   constructor(uri, cause) {
     super(`Could not reach ArcadeDB at ${uri}. Is the container running? Try \`docker ps\`.`);
     this.uri = uri;
     this.cause = cause;
     this.name = "ArcadeDBConnectionError";
   }
+  uri;
+  cause;
 };
 var DatabaseNotFoundError = class extends Error {
-  database;
   constructor(database) {
     super(`Database "${database}" does not exist. Run \`arcadedb-memory migrate ${database}\` to create it.`);
     this.database = database;
     this.name = "DatabaseNotFoundError";
   }
+  database;
 };
 
-// ../agent-memory/dist/src/client.js
+// src/agent-memory/client.ts
 var DEFAULT_TIMEOUT_MS = 1e4;
 var Client = class {
-  env;
-  timeoutMs;
   constructor(env, options = {}) {
     this.env = env;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
+  env;
+  timeoutMs;
   authHeader() {
     return "Basic " + Buffer.from(`${this.env.username}:${this.env.password}`).toString("base64");
   }
@@ -79,22 +79,25 @@ var Client = class {
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
     }
-    if (!res.ok)
-      throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
+    if (!res.ok) throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
     const data = await res.json();
     return data.result;
   }
 };
 
-// ../agent-memory/dist/src/env.js
+// src/agent-memory/env.ts
 import { homedir } from "node:os";
 import { join } from "node:path";
 var DEFAULT_PATH = join(homedir(), ".config", "arcadedb", ".env");
 
-// ../agent-memory/dist/src/memory/sessions.js
+// src/agent-memory/memory/sessions.ts
 async function endSession(client, db, id, summary) {
   const summaryClause = summary ? `, s.summary = ${cypherStr(summary)}` : "";
-  await client.execute(db, "cypher", `MATCH (s:Session {id: ${cypherStr(id)}}) SET s.endedAt = datetime(${cypherStr((/* @__PURE__ */ new Date()).toISOString())})${summaryClause}`);
+  await client.execute(
+    db,
+    "cypher",
+    `MATCH (s:Session {id: ${cypherStr(id)}}) SET s.endedAt = datetime(${cypherStr((/* @__PURE__ */ new Date()).toISOString())})${summaryClause}`
+  );
 }
 function cypherStr(s) {
   return `'${s.replace(/'/g, "\\'")}'`;

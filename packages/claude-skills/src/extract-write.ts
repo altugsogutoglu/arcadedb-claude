@@ -1,4 +1,4 @@
-import { buildExtractorCypher } from "arcadedb-agent-memory";
+import { buildExtractorCypher } from "./agent-memory/index.js";
 import type { Triple } from "./extractor-validator.js";
 
 export interface ExecDeps {

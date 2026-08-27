@@ -6,35 +6,35 @@ import { dirname as dirname6 } from "node:path";
 import { execSync as execSync2 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 
-// ../agent-memory/dist/src/errors.js
+// src/agent-memory/errors.ts
 var ArcadeDBConnectionError = class extends Error {
-  uri;
-  cause;
   constructor(uri, cause) {
     super(`Could not reach ArcadeDB at ${uri}. Is the container running? Try \`docker ps\`.`);
     this.uri = uri;
     this.cause = cause;
     this.name = "ArcadeDBConnectionError";
   }
+  uri;
+  cause;
 };
 var DatabaseNotFoundError = class extends Error {
-  database;
   constructor(database) {
     super(`Database "${database}" does not exist. Run \`arcadedb-memory migrate ${database}\` to create it.`);
     this.database = database;
     this.name = "DatabaseNotFoundError";
   }
+  database;
 };
 
-// ../agent-memory/dist/src/client.js
+// src/agent-memory/client.ts
 var DEFAULT_TIMEOUT_MS = 1e4;
 var Client = class {
-  env;
-  timeoutMs;
   constructor(env, options = {}) {
     this.env = env;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
+  env;
+  timeoutMs;
   authHeader() {
     return "Basic " + Buffer.from(`${this.env.username}:${this.env.password}`).toString("base64");
   }
@@ -81,19 +81,18 @@ var Client = class {
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
     }
-    if (!res.ok)
-      throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
+    if (!res.ok) throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
     const data = await res.json();
     return data.result;
   }
 };
 
-// ../agent-memory/dist/src/env.js
+// src/agent-memory/env.ts
 import { homedir } from "node:os";
 import { join } from "node:path";
 var DEFAULT_PATH = join(homedir(), ".config", "arcadedb", ".env");
 
-// ../agent-memory/dist/src/schemas/core.js
+// src/agent-memory/schemas/core.ts
 var coreSchema = {
   name: "core",
   vertices: [
@@ -118,7 +117,7 @@ var coreSchema = {
   edges: []
 };
 
-// ../agent-memory/dist/src/schemas/memory.js
+// src/agent-memory/schemas/memory.ts
 var memorySchema = {
   name: "memory",
   vertices: [
@@ -184,7 +183,7 @@ var memorySchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/code.js
+// src/agent-memory/schemas/code.ts
 var codeSchema = {
   name: "code",
   vertices: [
@@ -252,7 +251,7 @@ var codeSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/business.js
+// src/agent-memory/schemas/business.ts
 var businessSchema = {
   name: "business",
   vertices: [
@@ -281,7 +280,7 @@ var businessSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/notes.js
+// src/agent-memory/schemas/notes.ts
 var notesSchema = {
   name: "notes",
   vertices: [
@@ -311,7 +310,7 @@ var notesSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/all.js
+// src/agent-memory/schemas/all.ts
 var allSchemas = {
   core: coreSchema,
   memory: memorySchema,
@@ -320,13 +319,11 @@ var allSchemas = {
   notes: notesSchema
 };
 
-// ../agent-memory/dist/src/migrations/render.js
+// src/agent-memory/migrations/render.ts
 function renderSchema(s) {
   const out = [];
-  for (const v of s.vertices)
-    out.push(...renderVertex(v));
-  for (const e of s.edges)
-    out.push(...renderEdge(e));
+  for (const v of s.vertices) out.push(...renderVertex(v));
+  for (const e of s.edges) out.push(...renderEdge(e));
   return out;
 }
 function renderVertex(v) {
@@ -351,14 +348,13 @@ function renderProperty(typeName, p) {
   return stmts;
 }
 
-// ../agent-memory/dist/src/migrations/apply.js
+// src/agent-memory/migrations/apply.ts
 async function applySchemas(client, database, domains) {
   await ensureDatabase(client, database);
   const selected = domains ?? Object.keys(allSchemas);
   for (const domain of selected) {
     const schema = allSchemas[domain];
-    if (!schema)
-      throw new Error(`Unknown schema domain: ${domain}`);
+    if (!schema) throw new Error(`Unknown schema domain: ${domain}`);
     const stmts = renderSchema(schema);
     for (const stmt of stmts) {
       await client.execute(database, "sql", stmt);
@@ -367,23 +363,30 @@ async function applySchemas(client, database, domains) {
 }
 async function ensureDatabase(client, database) {
   const existing = await client.listDatabases();
-  if (existing.includes(database))
-    return;
+  if (existing.includes(database)) return;
   await client.command(`create database ${database}`);
 }
 
-// ../agent-memory/dist/src/memory/sessions.js
+// src/agent-memory/memory/sessions.ts
 import { randomUUID } from "node:crypto";
 async function startSession(client, db, input = {}) {
   const id = randomUUID();
   const repoClause = input.repo ? `, repo: ${cypherStr(input.repo)}` : "";
-  await client.execute(db, "cypher", `CREATE (s:Session { id: ${cypherStr(id)}, startedAt: datetime(${cypherStr((/* @__PURE__ */ new Date()).toISOString())})${repoClause} })`);
+  await client.execute(
+    db,
+    "cypher",
+    `CREATE (s:Session { id: ${cypherStr(id)}, startedAt: datetime(${cypherStr((/* @__PURE__ */ new Date()).toISOString())})${repoClause} })`
+  );
   return id;
 }
 async function findLatestSessionForRepo(client, db, repo, excludeId) {
   const excludeClause = excludeId ? ` AND s.id <> ${cypherStr(excludeId)}` : "";
-  const rows = await client.query(db, "cypher", `MATCH (s:Session) WHERE s.repo = ${cypherStr(repo)}${excludeClause}
-     RETURN s.id ORDER BY s.startedAt DESC LIMIT 1`);
+  const rows = await client.query(
+    db,
+    "cypher",
+    `MATCH (s:Session) WHERE s.repo = ${cypherStr(repo)}${excludeClause}
+     RETURN s.id ORDER BY s.startedAt DESC LIMIT 1`
+  );
   return rows[0]?.["s.id"] ?? null;
 }
 function cypherStr(s) {

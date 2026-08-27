@@ -4,35 +4,35 @@
 import { readFileSync as readFileSync6, writeFileSync as writeFileSync4, mkdirSync as mkdirSync6, existsSync as existsSync8 } from "node:fs";
 import { dirname as dirname7 } from "node:path";
 
-// ../agent-memory/dist/src/errors.js
+// src/agent-memory/errors.ts
 var ArcadeDBConnectionError = class extends Error {
-  uri;
-  cause;
   constructor(uri, cause) {
     super(`Could not reach ArcadeDB at ${uri}. Is the container running? Try \`docker ps\`.`);
     this.uri = uri;
     this.cause = cause;
     this.name = "ArcadeDBConnectionError";
   }
+  uri;
+  cause;
 };
 var DatabaseNotFoundError = class extends Error {
-  database;
   constructor(database) {
     super(`Database "${database}" does not exist. Run \`arcadedb-memory migrate ${database}\` to create it.`);
     this.database = database;
     this.name = "DatabaseNotFoundError";
   }
+  database;
 };
 
-// ../agent-memory/dist/src/client.js
+// src/agent-memory/client.ts
 var DEFAULT_TIMEOUT_MS = 1e4;
 var Client = class {
-  env;
-  timeoutMs;
   constructor(env, options = {}) {
     this.env = env;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
+  env;
+  timeoutMs;
   authHeader() {
     return "Basic " + Buffer.from(`${this.env.username}:${this.env.password}`).toString("base64");
   }
@@ -79,19 +79,18 @@ var Client = class {
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
     }
-    if (!res.ok)
-      throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
+    if (!res.ok) throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
     const data = await res.json();
     return data.result;
   }
 };
 
-// ../agent-memory/dist/src/env.js
+// src/agent-memory/env.ts
 import { homedir } from "node:os";
 import { join } from "node:path";
 var DEFAULT_PATH = join(homedir(), ".config", "arcadedb", ".env");
 
-// ../agent-memory/dist/src/schemas/core.js
+// src/agent-memory/schemas/core.ts
 var coreSchema = {
   name: "core",
   vertices: [
@@ -116,7 +115,7 @@ var coreSchema = {
   edges: []
 };
 
-// ../agent-memory/dist/src/schemas/memory.js
+// src/agent-memory/schemas/memory.ts
 var memorySchema = {
   name: "memory",
   vertices: [
@@ -182,7 +181,7 @@ var memorySchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/code.js
+// src/agent-memory/schemas/code.ts
 var codeSchema = {
   name: "code",
   vertices: [
@@ -250,7 +249,7 @@ var codeSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/business.js
+// src/agent-memory/schemas/business.ts
 var businessSchema = {
   name: "business",
   vertices: [
@@ -279,7 +278,7 @@ var businessSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/notes.js
+// src/agent-memory/schemas/notes.ts
 var notesSchema = {
   name: "notes",
   vertices: [
@@ -309,7 +308,7 @@ var notesSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/all.js
+// src/agent-memory/schemas/all.ts
 var allSchemas = {
   core: coreSchema,
   memory: memorySchema,
@@ -318,14 +317,13 @@ var allSchemas = {
   notes: notesSchema
 };
 
-// ../agent-memory/dist/src/extractor/cypher-builder.js
+// src/agent-memory/extractor/cypher-builder.ts
 function quote(v) {
   return '"' + String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 }
 function propsClause(label, props, naturalKeys) {
   const key = (naturalKeys[label] ?? [])[0];
-  if (!key)
-    throw new Error(`no natural key for label ${label}`);
+  if (!key) throw new Error(`no natural key for label ${label}`);
   return `{${key}:${quote(props[key])}}`;
 }
 function buildExtractorCypher(args) {

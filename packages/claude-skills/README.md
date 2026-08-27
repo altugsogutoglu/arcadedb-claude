@@ -1,38 +1,27 @@
 # arcadedb-claude-skills
 
-Claude Code plugin: auto-injects ArcadeDB graph context per project and provides slash commands for graph operations. Phase 3 of the `arcadedb-claude` suite.
+Claude Code plugin: auto-injects ArcadeDB graph context per project and provides slash commands for graph operations. Since 0.8.0 this is the whole `arcadedb-claude` suite in one npm package.
 
-## The arcadedb-claude suite
+## What is inside
 
-A 4-package set that turns [ArcadeDB](https://arcadedb.com) into a first-class graph layer for Claude Code. Auto-injects graph context per project, records decisions across sessions, and indexes both code and notes into one queryable graph.
-
-| Package | Role |
+| Part | Role |
 |---|---|
-| **[arcadedb-agent-memory](https://github.com/altugsogutoglu/arcadedb-agent-memory)** | Foundation: schemas + HTTP client + memory helpers + CLI |
-| **[arcadedb-code-indexer](https://github.com/altugsogutoglu/arcadedb-code-indexer)** | CLI: walks Laravel/Next.js repos, writes `:Module`/`:File`/`:IMPORTS` |
-| **[arcadedb-claude-skills](https://github.com/altugsogutoglu/arcadedb-claude-skills)** | Claude Code plugin: SessionStart hook + skill + 4 slash commands |
-| **[obsidian-to-arcadedb](https://github.com/altugsogutoglu/obsidian-to-arcadedb)** | CLI: syncs an Obsidian vault, writes `:Note`/`:Tag`/`:LINKS_TO` |
+| `src/agent-memory` | Schemas + HTTP client + memory helpers; `arcadedb-memory` CLI |
+| `src/code-indexer` | Walks TS/JS/PHP/Java repos, writes `:Module`/`:File`/`:IMPORTS`; `arcadedb-index` CLI |
+| `src/obsidian-sync` | Syncs an Obsidian vault, writes `:Note`/`:Tag`/`:LINKS_TO`; `obsidian-sync` CLI |
+| `src/*.ts` + `hooks/` | Claude Code plugin: SessionStart/PostToolUse/Stop/SessionEnd hooks, skill, slash commands, `arcadedb-skills` CLI |
 
 ```
                        ArcadeDB (Docker, port 2480, MCP)
                        claude_memory  |  per-project DBs
                                 ▲
-            ┌───────────────────┼───────────────────────────┐
-            │                   │                           │
-   agent-memory          code-indexer                obsidian-to-arcadedb
-   (schemas+lib+CLI)     (CLI)                       (CLI)
-            ▲                                                ▲
-            └────────── all depend on agent-memory ──────────┘
-                                ▲
-                         claude-skills
-                         (Claude Code plugin)
+                       arcadedb-claude-skills
+                       agent-memory | code-indexer | obsidian-sync | hooks
                                 ▲
                            Claude Code session
 ```
 
-All 4 packages are MIT, TypeScript, Node 20+.
-
-Published on npm as `arcadedb-claude-skills`; the plugin installs from the `arcadedb-claude` Claude Code marketplace.
+MIT, TypeScript, Node 20+. Published on npm as `arcadedb-claude-skills`; the plugin installs from the `arcadedb-claude` Claude Code marketplace.
 
 ## Quick start
 

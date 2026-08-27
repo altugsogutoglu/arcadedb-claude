@@ -1,6 +1,6 @@
 {
   "name": "arcadedb-claude",
-  "version": "0.3.0",
+  "version": "0.8.0",
   "private": true,
   "description": "ArcadeDB-powered graph intelligence suite for Claude Code: agent memory, code indexing, Obsidian sync, and a Claude Code plugin.",
   "license": "MIT",
@@ -9,11 +9,11 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w packages/agent-memory -w packages/code-indexer && npm run build --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:unit": "npm run test:unit --workspaces --if-present",
     "clean": "rm -rf packages/*/dist packages/*/node_modules node_modules",
-    "publish:all": "npm publish --workspaces --access public"
+    "publish:all": "npm publish -w packages/claude-skills --access public"
   },
   "engines": {
     "node": ">=20"

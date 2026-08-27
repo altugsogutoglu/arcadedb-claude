@@ -9,7 +9,7 @@ import {
   findLatestSessionForRepo,
   linkFollows,
   applySchemas,
-} from "arcadedb-agent-memory";
+} from "./agent-memory/index.js";
 import { ensureEnvFile, resolveConfig, toClientEnv } from "./config.js";
 import { resolveMemoryDb } from "./memory-db.js";
 import { probeServer, probeBanner } from "./server-probe.js";

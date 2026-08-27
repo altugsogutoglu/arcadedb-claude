@@ -1,4 +1,4 @@
-import { loadEnv } from "arcadedb-agent-memory";
+import { loadEnv } from "../../src/agent-memory/index.js";
 
 const env = loadEnv();
 

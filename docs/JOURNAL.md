@@ -35,7 +35,10 @@ zero configuration beyond the ArcadeDB password.
   to substitute it.
 
 **Next:**
-- Push main, tag `v0.7.0-plugin` and `v0.4.2-code-indexer`.
+- Merged the four packages into one (`arcadedb-claude-skills` 0.8.0): three
+  Trusted Publishers, three tags and cross-package version drift were pure
+  cost; nothing consumed agent-memory or code-indexer standalone. Push main,
+  tag `v0.8.0`, deprecate the three old npm packages.
 - Real-session proof: unregistered repo shows the server banner and
   auto-register + background-index-in-progress on session 1, file/import
   counts on session 2.

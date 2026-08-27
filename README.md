@@ -2,10 +2,7 @@
 
 > Persistent graph-based memory and code intelligence for AI coding agents (Claude Code, Cursor, Aider, custom Anthropic SDK / OpenAI SDK agents). Multi-repo, multi-project, locally hosted, open source. Powered by [ArcadeDB](https://arcadedb.com).
 
-[![npm: arcadedb-agent-memory](https://img.shields.io/npm/v/arcadedb-agent-memory?label=arcadedb-agent-memory)](https://www.npmjs.com/package/arcadedb-agent-memory)
-[![npm: arcadedb-code-indexer](https://img.shields.io/npm/v/arcadedb-code-indexer?label=arcadedb-code-indexer)](https://www.npmjs.com/package/arcadedb-code-indexer)
 [![npm: arcadedb-claude-skills](https://img.shields.io/npm/v/arcadedb-claude-skills?label=arcadedb-claude-skills)](https://www.npmjs.com/package/arcadedb-claude-skills)
-[![npm: obsidian-to-arcadedb](https://img.shields.io/npm/v/obsidian-to-arcadedb?label=obsidian-to-arcadedb)](https://www.npmjs.com/package/obsidian-to-arcadedb)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## The problem
@@ -21,14 +18,14 @@ What's needed is a **persistent graph** the agent can query before answering —
 
 ## The solution
 
-`arcadedb-claude` is a four-package suite that gives Claude Code (and any other Anthropic SDK or OpenAI SDK agent that can shell out to a CLI) exactly that:
+`arcadedb-claude` ships as one npm package, [`arcadedb-claude-skills`](./packages/claude-skills), that gives Claude Code (and any other Anthropic SDK or OpenAI SDK agent that can shell out to a CLI) exactly that:
 
-| Package | What it does |
+| Component | What it does |
 |---|---|
-| [`arcadedb-agent-memory`](./packages/agent-memory) | Graph schemas (`:Decision`, `:Insight`, `:Session`, `:Question`, `:Answer`), thin HTTP client, memory helpers, `arcadedb-memory` CLI |
-| [`arcadedb-code-indexer`](./packages/code-indexer) | Walks a codebase (TypeScript / JavaScript / PHP / Java today) and writes its structure (`:Repo`, `:Module`, `:File`, `:CONTAINS`, `:IMPORTS`) into a project-scoped ArcadeDB database |
-| [`obsidian-to-arcadedb`](./packages/obsidian-sync) | Syncs an Obsidian vault into ArcadeDB as `:Note` nodes connected by `[[wikilink]]` edges — turns your second brain into a graph the agent can traverse |
-| [`arcadedb-claude-skills`](./packages/claude-skills) | The Claude Code plugin. Auto-injects per-project graph context on every session start. Slash commands for recording decisions, querying the graph, indexing, and status |
+| Plugin (hooks + commands) | Auto-injects per-project graph context on every session start. Slash commands for recording decisions, querying the graph, indexing, and status |
+| `src/agent-memory` + `arcadedb-memory` CLI | Graph schemas (`:Decision`, `:Insight`, `:Session`, `:Question`, `:Answer`), thin HTTP client, memory helpers |
+| `src/code-indexer` + `arcadedb-index` CLI | Walks a codebase (TypeScript / JavaScript / PHP / Java today) and writes its structure (`:Repo`, `:Module`, `:File`, `:CONTAINS`, `:IMPORTS`) into a project-scoped ArcadeDB database |
+| `src/obsidian-sync` + `obsidian-sync` CLI | Syncs an Obsidian vault into ArcadeDB as `:Note` nodes connected by `[[wikilink]]` edges, so your second brain becomes a graph the agent can traverse |
 
 ```
                        ArcadeDB server (Apache 2.0, runs locally or anywhere)
@@ -67,7 +64,7 @@ We evaluated Neo4j, Memgraph, KuzuDB, Dgraph, and ArcadeDB. ArcadeDB won on ever
 
 Apache 2.0 matters because this code goes into your business workflows. GPL-licensed dependencies can poison the surrounding closed-source code under copyleft rules; Apache 2.0 does not. Multi-database matters because you want strict isolation between your client work, your personal projects, and the shared memory layer — without paying for an enterprise license.
 
-If those concerns don't bind for you, the architecture in this repo is intentionally portable. The HTTP client in `arcadedb-agent-memory` is ~50 lines and could be swapped for any other Cypher-speaking backend.
+If those concerns don't bind for you, the architecture in this repo is intentionally portable. The HTTP client in `src/agent-memory/client.ts` is ~50 lines and could be swapped for any other Cypher-speaking backend.
 
 ## Getting started
 
@@ -130,15 +127,13 @@ ArcadeDB context loaded:
 For other agents (Cursor, Aider, custom SDK agents), scripts, CI, your own tooling:
 
 ```bash
-npm install -g arcadedb-agent-memory   # ships the `arcadedb-memory` CLI
-npm install -g arcadedb-code-indexer   # ships the `arcadedb-index` CLI
-npm install -g obsidian-to-arcadedb    # ships the `obsidian-sync` CLI
+npm install -g arcadedb-claude-skills   # ships arcadedb-memory, arcadedb-index, obsidian-sync, arcadedb-skills
 ```
 
 Or as a library inside your own agent:
 
 ```ts
-import { Client, recordDecision, recordInsight } from "arcadedb-agent-memory";
+import { Client, recordDecision, recordInsight } from "arcadedb-claude-skills/dist/src/agent-memory/index.js";
 
 const client = new Client({ httpUri: "http://localhost:2480", username: "root", password: "..." });
 
@@ -198,22 +193,25 @@ The plugin matches the current session's working directory against projects by (
 ```
 arcadedb-claude/
 ├── packages/
-│   ├── agent-memory/    ← arcadedb-agent-memory  (lib + arcadedb-memory CLI)
-│   ├── code-indexer/    ← arcadedb-code-indexer  (lib + arcadedb-index CLI)
-│   ├── obsidian-sync/   ← obsidian-to-arcadedb   (lib + obsidian-sync CLI)
-│   └── claude-skills/   ← arcadedb-claude-skills (Claude Code plugin)
+│   └── claude-skills/   ← arcadedb-claude-skills (the one npm package)
+│       ├── src/agent-memory/   schemas, HTTP client, memory helpers
+│       ├── src/code-indexer/   repo walker + graph writer
+│       ├── src/obsidian-sync/  vault walker + graph writer
+│       ├── src/*.ts            plugin hooks, config, capture
+│       ├── bin/                arcadedb-skills, arcadedb-memory, arcadedb-index, obsidian-sync
+│       └── hooks/              esbuild bundles Claude Code runs
 ├── .claude-plugin/marketplace.json
 ├── package.json         (npm workspaces root)
 └── README.md
 ```
 
-Each package has its own `README.md` with API details.
+Older per-package READMEs are archived under `docs/superpowers/archive/`.
 
 ## Development
 
 ```bash
 npm install              # one install, hoisted across workspaces
-npm run build            # builds all four packages (incl. esbuild bundling of plugin hooks)
+npm run build            # tsc + esbuild bundling of plugin hooks
 npm test                 # vitest in all packages
 npm run test:unit        # unit tests only (skips integration tests that need a live ArcadeDB)
 ```

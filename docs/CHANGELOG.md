@@ -1,8 +1,15 @@
 # Changelog
 
-Keep a Changelog style. Newest on top. Per-package versions live in packages/*/package.json.
+Keep a Changelog style. Newest on top. Since 0.8.0 there is one package: packages/claude-skills.
 
 ## [Unreleased]
+
+## arcadedb-claude-skills 0.8.0 - 2026-08-27
+
+### Changed
+- One npm package. `arcadedb-agent-memory`, `arcadedb-code-indexer` and `obsidian-to-arcadedb` are folded into `arcadedb-claude-skills` as `src/agent-memory`, `src/code-indexer`, `src/obsidian-sync`. Their CLIs (`arcadedb-memory`, `arcadedb-index`, `obsidian-sync`) ship as bins of this package. The old packages are deprecated on npm and frozen at 0.4.1 / 0.4.2 / 0.2.0.
+- Release tags are `vX.Y.Z`; the publish workflow publishes the one package.
+- Everything listed under 0.7.0 below, which was never published.
 
 ### Added
 - docs/ structure: JOURNAL, STATE, BACKLOG, decisions/, plans/, GLOSSARY, DOMAIN, FEATURE-MAP, PLATFORM.

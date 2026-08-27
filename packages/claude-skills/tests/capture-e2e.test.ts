@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { Client, applySchemas } from "arcadedb-agent-memory";
+import { Client, applySchemas } from "../src/agent-memory/index.js";
 import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
 
 const require = createRequire(import.meta.url);

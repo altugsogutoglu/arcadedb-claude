@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { Client, applySchemas, recordDecision, recordInsight } from "arcadedb-agent-memory";
+import { Client, applySchemas, recordDecision, recordInsight } from "../src/agent-memory/index.js";
 import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
 import { deriveProjectIdentity } from "../src/auto-register.js";
 

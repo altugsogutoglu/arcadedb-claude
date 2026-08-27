@@ -1,7 +1,7 @@
 # Project State
 
 **Last updated:** 2026-08-27
-**Phase:** 1 - plug-and-play shipped (0.7.0); S2 embed next
+**Phase:** 1 - plug-and-play shipped, suite merged into one package (0.8.0); S2 embed next
 **Branch:** main
 
 ## What this project is

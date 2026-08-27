@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { Client, endSession } from "arcadedb-agent-memory";
+import { Client, endSession } from "./agent-memory/index.js";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { loadProjects } from "./project-map.js";
 import { resolveConfig, toClientEnv } from "./config.js";

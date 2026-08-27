@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, copyFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { Client, applySchemas, startSession } from "arcadedb-agent-memory";
+import { Client, applySchemas, startSession } from "../src/agent-memory/index.js";
 import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
 
 const require = createRequire(import.meta.url);

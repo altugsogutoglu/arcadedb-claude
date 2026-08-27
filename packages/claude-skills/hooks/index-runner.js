@@ -6,35 +6,35 @@ import { execSync } from "node:child_process";
 import { join as join10 } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// ../agent-memory/dist/src/errors.js
+// src/agent-memory/errors.ts
 var ArcadeDBConnectionError = class extends Error {
-  uri;
-  cause;
   constructor(uri, cause) {
     super(`Could not reach ArcadeDB at ${uri}. Is the container running? Try \`docker ps\`.`);
     this.uri = uri;
     this.cause = cause;
     this.name = "ArcadeDBConnectionError";
   }
+  uri;
+  cause;
 };
 var DatabaseNotFoundError = class extends Error {
-  database;
   constructor(database) {
     super(`Database "${database}" does not exist. Run \`arcadedb-memory migrate ${database}\` to create it.`);
     this.database = database;
     this.name = "DatabaseNotFoundError";
   }
+  database;
 };
 
-// ../agent-memory/dist/src/client.js
+// src/agent-memory/client.ts
 var DEFAULT_TIMEOUT_MS = 1e4;
 var Client = class {
-  env;
-  timeoutMs;
   constructor(env, options = {}) {
     this.env = env;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
+  env;
+  timeoutMs;
   authHeader() {
     return "Basic " + Buffer.from(`${this.env.username}:${this.env.password}`).toString("base64");
   }
@@ -81,19 +81,18 @@ var Client = class {
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
     }
-    if (!res.ok)
-      throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
+    if (!res.ok) throw new Error(`ArcadeDB ${res.status} ${res.statusText}`);
     const data = await res.json();
     return data.result;
   }
 };
 
-// ../agent-memory/dist/src/env.js
+// src/agent-memory/env.ts
 import { homedir } from "node:os";
 import { join } from "node:path";
 var DEFAULT_PATH = join(homedir(), ".config", "arcadedb", ".env");
 
-// ../agent-memory/dist/src/schemas/core.js
+// src/agent-memory/schemas/core.ts
 var coreSchema = {
   name: "core",
   vertices: [
@@ -118,7 +117,7 @@ var coreSchema = {
   edges: []
 };
 
-// ../agent-memory/dist/src/schemas/memory.js
+// src/agent-memory/schemas/memory.ts
 var memorySchema = {
   name: "memory",
   vertices: [
@@ -184,7 +183,7 @@ var memorySchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/code.js
+// src/agent-memory/schemas/code.ts
 var codeSchema = {
   name: "code",
   vertices: [
@@ -252,7 +251,7 @@ var codeSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/business.js
+// src/agent-memory/schemas/business.ts
 var businessSchema = {
   name: "business",
   vertices: [
@@ -281,7 +280,7 @@ var businessSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/notes.js
+// src/agent-memory/schemas/notes.ts
 var notesSchema = {
   name: "notes",
   vertices: [
@@ -311,7 +310,7 @@ var notesSchema = {
   ]
 };
 
-// ../agent-memory/dist/src/schemas/all.js
+// src/agent-memory/schemas/all.ts
 var allSchemas = {
   core: coreSchema,
   memory: memorySchema,
@@ -320,13 +319,11 @@ var allSchemas = {
   notes: notesSchema
 };
 
-// ../agent-memory/dist/src/migrations/render.js
+// src/agent-memory/migrations/render.ts
 function renderSchema(s) {
   const out = [];
-  for (const v of s.vertices)
-    out.push(...renderVertex(v));
-  for (const e of s.edges)
-    out.push(...renderEdge(e));
+  for (const v of s.vertices) out.push(...renderVertex(v));
+  for (const e of s.edges) out.push(...renderEdge(e));
   return out;
 }
 function renderVertex(v) {
@@ -351,14 +348,13 @@ function renderProperty(typeName, p) {
   return stmts;
 }
 
-// ../agent-memory/dist/src/migrations/apply.js
+// src/agent-memory/migrations/apply.ts
 async function applySchemas(client, database, domains) {
   await ensureDatabase(client, database);
   const selected = domains ?? Object.keys(allSchemas);
   for (const domain of selected) {
     const schema = allSchemas[domain];
-    if (!schema)
-      throw new Error(`Unknown schema domain: ${domain}`);
+    if (!schema) throw new Error(`Unknown schema domain: ${domain}`);
     const stmts = renderSchema(schema);
     for (const stmt of stmts) {
       await client.execute(database, "sql", stmt);
@@ -367,16 +363,15 @@ async function applySchemas(client, database, domains) {
 }
 async function ensureDatabase(client, database) {
   const existing = await client.listDatabases();
-  if (existing.includes(database))
-    return;
+  if (existing.includes(database)) return;
   await client.command(`create database ${database}`);
 }
 
-// ../code-indexer/dist/src/indexer.js
+// src/code-indexer/indexer.ts
 import { readFile as readFile3 } from "node:fs/promises";
 import { basename, join as join5, resolve } from "node:path";
 
-// ../code-indexer/dist/src/walker.js
+// src/code-indexer/walker.ts
 import { readdir, stat } from "node:fs/promises";
 import { join as join2, relative } from "node:path";
 var DEFAULT_EXCLUDES = /* @__PURE__ */ new Set([
@@ -432,8 +427,7 @@ async function walkRepo(root, options = {}) {
 async function walk(root, dir, excludes, out) {
   const entries = await readdir(dir);
   for (const entry of entries) {
-    if (excludes.has(entry))
-      continue;
+    if (excludes.has(entry)) continue;
     const full = join2(dir, entry);
     const s = await stat(full);
     if (s.isDirectory()) {
@@ -444,42 +438,36 @@ async function walk(root, dir, excludes, out) {
   }
 }
 
-// ../code-indexer/dist/src/languages.js
+// src/code-indexer/languages.ts
 var TS_EXT = /* @__PURE__ */ new Set([".ts", ".tsx"]);
 var JS_EXT = /* @__PURE__ */ new Set([".js", ".jsx", ".mjs", ".cjs"]);
 var PHP_EXT = /* @__PURE__ */ new Set([".php"]);
 var JAVA_EXT = /* @__PURE__ */ new Set([".java"]);
 function detectLanguage(path) {
   const ext = extOf(path);
-  if (TS_EXT.has(ext))
-    return "ts";
-  if (JS_EXT.has(ext))
-    return "js";
-  if (PHP_EXT.has(ext))
-    return "php";
-  if (JAVA_EXT.has(ext))
-    return "java";
+  if (TS_EXT.has(ext)) return "ts";
+  if (JS_EXT.has(ext)) return "js";
+  if (PHP_EXT.has(ext)) return "php";
+  if (JAVA_EXT.has(ext)) return "java";
   return "other";
 }
 function extOf(path) {
   const i = path.lastIndexOf(".");
-  if (i === -1)
-    return "";
+  if (i === -1) return "";
   return path.slice(i).toLowerCase();
 }
 
-// ../code-indexer/dist/src/modules.js
+// src/code-indexer/modules.ts
 function detectModule(filePath) {
   const parts = filePath.split("/").filter(Boolean);
-  if (parts.length === 1)
-    return "root";
+  if (parts.length === 1) return "root";
   if (parts[0] === "app" && parts.length >= 3 && /^[A-Z]/.test(parts[1])) {
     return parts[1];
   }
   return parts[0];
 }
 
-// ../code-indexer/dist/src/parsers/ts-imports.js
+// src/code-indexer/parsers/ts-imports.ts
 var IMPORT_RE = /^\s*import\s+(?:[^"']*?\s+from\s+)?["']([^"']+)["']/gm;
 var DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
 var REQUIRE_RE = /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g;
@@ -506,14 +494,12 @@ function stripComments(src) {
     const c = src[i];
     const next = src[i + 1];
     if (c === "/" && next === "/") {
-      while (i < n && src[i] !== "\n")
-        i++;
+      while (i < n && src[i] !== "\n") i++;
       continue;
     }
     if (c === "/" && next === "*") {
       i += 2;
-      while (i < n && !(src[i] === "*" && src[i + 1] === "/"))
-        i++;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
       i += 2;
       continue;
     }
@@ -531,17 +517,15 @@ function isInsideStringLiteral(src, pos) {
         i++;
         continue;
       }
-      if (c === inStr)
-        inStr = null;
+      if (c === inStr) inStr = null;
     } else {
-      if (c === '"' || c === "'" || c === "`")
-        inStr = c;
+      if (c === '"' || c === "'" || c === "`") inStr = c;
     }
   }
   return inStr !== null;
 }
 
-// ../code-indexer/dist/src/parsers/php-imports.js
+// src/code-indexer/parsers/php-imports.ts
 var SIMPLE_USE_RE = /^\s*use\s+([\w\\]+)(?:\s+as\s+\w+)?\s*;/gm;
 var GROUPED_USE_RE = /^\s*use\s+([\w\\]+)\\\{\s*([^}]+)\}\s*;/gm;
 function parsePhpImports(source) {
@@ -560,15 +544,14 @@ function parsePhpImports(source) {
   }
   SIMPLE_USE_RE.lastIndex = 0;
   while ((m = SIMPLE_USE_RE.exec(source)) !== null) {
-    if (/\\\{/.test(m[0]))
-      continue;
+    if (/\\\{/.test(m[0])) continue;
     out.push({ idx: m.index, fqn: m[1] });
   }
   out.sort((a, b) => a.idx - b.idx);
   return out.map((x) => x.fqn);
 }
 
-// ../code-indexer/dist/src/parsers/java-imports.js
+// src/code-indexer/parsers/java-imports.ts
 var PACKAGE_RE = /^\s*package\s+([\w.]+)\s*;/m;
 var IMPORT_RE2 = /^\s*import\s+(?:(static)\s+)?([\w.]+(?:\.\*)?)\s*;/gm;
 function parseJavaPackage(source) {
@@ -605,14 +588,12 @@ function stripComments2(src) {
     const c = src[i];
     const next = src[i + 1];
     if (c === "/" && next === "/") {
-      while (i < n && src[i] !== "\n")
-        i++;
+      while (i < n && src[i] !== "\n") i++;
       continue;
     }
     if (c === "/" && next === "*") {
       i += 2;
-      while (i < n && !(src[i] === "*" && src[i + 1] === "/"))
-        i++;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
       i += 2;
       continue;
     }
@@ -652,7 +633,7 @@ function stripComments2(src) {
   return out;
 }
 
-// ../code-indexer/dist/src/resolvers/java.js
+// src/code-indexer/resolvers/java.ts
 function javaFqnForFile(relPath, pkg) {
   const file = relPath.split(/[/\\]/).pop() ?? relPath;
   const base = file.replace(/\.java$/, "");
@@ -660,28 +641,24 @@ function javaFqnForFile(relPath, pkg) {
 }
 function resolveJavaImport(imp, typeIndex, packages) {
   if (imp.kind === "wildcard") {
-    if (packages.has(imp.fqn))
-      return { kind: "module", pkg: imp.fqn };
+    if (packages.has(imp.fqn)) return { kind: "module", pkg: imp.fqn };
     return { kind: "unresolved", spec: `${imp.fqn}.*` };
   }
   let current = imp.fqn;
   while (current) {
     const path = typeIndex.get(current);
-    if (path)
-      return { kind: "file", path };
+    if (path) return { kind: "file", path };
     const lastDot = current.lastIndexOf(".");
-    if (lastDot === -1)
-      break;
+    if (lastDot === -1) break;
     current = current.slice(0, lastDot);
   }
   return { kind: "unresolved", spec: imp.fqn };
 }
 
-// ../code-indexer/dist/src/resolvers/path.js
+// src/code-indexer/resolvers/path.ts
 import { posix } from "node:path";
 function resolveRelative(fromFile, spec) {
-  if (!spec.startsWith("."))
-    return spec;
+  if (!spec.startsWith(".")) return spec;
   const fromDir = posix.dirname(fromFile);
   const joined = posix.normalize(posix.join(fromDir, spec));
   return joined;
@@ -697,7 +674,7 @@ function resolvePsr4(fqn, map) {
   return null;
 }
 
-// ../code-indexer/dist/src/resolvers/tsconfig.js
+// src/code-indexer/resolvers/tsconfig.ts
 import { readFile } from "node:fs/promises";
 import { join as join3, posix as posix2 } from "node:path";
 async function findTsconfigs(projectRoot, walkedFiles) {
@@ -710,8 +687,7 @@ async function findTsconfigs(projectRoot, walkedFiles) {
       const parsed = JSON.parse(cleaned);
       const co = parsed?.compilerOptions ?? {};
       const paths = co.paths;
-      if (!paths || typeof paths !== "object")
-        continue;
+      if (!paths || typeof paths !== "object") continue;
       const baseUrl = typeof co.baseUrl === "string" ? co.baseUrl : ".";
       const configDir2 = posix2.dirname(rel);
       out.set(configDir2, { configDir: configDir2, baseUrl, paths });
@@ -724,23 +700,19 @@ function tsconfigForFile(importingFile, configs) {
   let dir = posix2.dirname(importingFile);
   while (true) {
     const c = configs.get(dir);
-    if (c)
-      return c;
+    if (c) return c;
     const parent = posix2.dirname(dir);
-    if (parent === dir)
-      return null;
+    if (parent === dir) return null;
     dir = parent;
   }
 }
 function resolveAlias(spec, config) {
   for (const [pattern, targets] of Object.entries(config.paths)) {
-    if (!targets || !targets.length)
-      continue;
+    if (!targets || !targets.length) continue;
     const target = targets[0];
     if (pattern.endsWith("/*")) {
       const prefix = pattern.slice(0, -2);
-      if (!spec.startsWith(prefix + "/") && spec !== prefix)
-        continue;
+      if (!spec.startsWith(prefix + "/") && spec !== prefix) continue;
       const rest = spec === prefix ? "" : spec.slice(prefix.length + 1);
       const targetBase = target.endsWith("/*") ? target.slice(0, -2) : target;
       const resolvedInConfig = posix2.normalize(posix2.join(targetBase, rest));
@@ -773,8 +745,7 @@ function stripJsonComments(text) {
         i += 2;
         continue;
       }
-      if (ch === stringChar)
-        inString = false;
+      if (ch === stringChar) inString = false;
       i++;
       continue;
     }
@@ -786,14 +757,12 @@ function stripJsonComments(text) {
       continue;
     }
     if (ch === "/" && next === "/") {
-      while (i < text.length && text[i] !== "\n")
-        i++;
+      while (i < text.length && text[i] !== "\n") i++;
       continue;
     }
     if (ch === "/" && next === "*") {
       i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/"))
-        i++;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
       i += 2;
       continue;
     }
@@ -803,7 +772,7 @@ function stripJsonComments(text) {
   return out.replace(/,(\s*[}\]])/g, "$1");
 }
 
-// ../code-indexer/dist/src/resolvers/composer.js
+// src/code-indexer/resolvers/composer.ts
 import { readFile as readFile2 } from "node:fs/promises";
 import { join as join4, posix as posix3 } from "node:path";
 async function findComposers(projectRoot, walkedFiles) {
@@ -821,14 +790,12 @@ async function findComposers(projectRoot, walkedFiles) {
       const psr4 = {};
       for (const [ns, target] of Object.entries(psr4Raw)) {
         const path = Array.isArray(target) ? target[0] : target;
-        if (typeof path !== "string")
-          continue;
+        if (typeof path !== "string") continue;
         const cleaned = path.replace(/\/$/, "");
         const fromRoot = composerDir === "." ? cleaned : posix3.normalize(posix3.join(composerDir, cleaned));
         psr4[ns] = `${fromRoot}/`;
       }
-      if (Object.keys(psr4).length > 0)
-        out.set(composerDir, { composerDir, psr4 });
+      if (Object.keys(psr4).length > 0) out.set(composerDir, { composerDir, psr4 });
     } catch {
     }
   }
@@ -838,21 +805,17 @@ function composerForFile(importingFile, composers) {
   let dir = posix3.dirname(importingFile);
   while (true) {
     const c = composers.get(dir);
-    if (c)
-      return c;
+    if (c) return c;
     const parent = posix3.dirname(dir);
-    if (parent === dir)
-      return null;
+    if (parent === dir) return null;
     dir = parent;
   }
 }
 
-// ../code-indexer/dist/src/writer.js
+// src/code-indexer/writer.ts
 function q(s) {
-  if (s === void 0 || s === null)
-    return "null";
-  if (typeof s === "number")
-    return String(s);
+  if (s === void 0 || s === null) return "null";
+  if (typeof s === "number") return String(s);
   return `'${String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 async function upsertRepo(client, db, repo) {
@@ -919,7 +882,7 @@ async function linkImportsToModule(client, db, fromFilePath, modulePath) {
   await client.execute(db, "cypher", cy);
 }
 
-// ../code-indexer/dist/src/indexer.js
+// src/code-indexer/indexer.ts
 async function indexRepo(client, rootAbsPath, options) {
   const root = resolve(rootAbsPath);
   const repoName = basename(root);
@@ -932,8 +895,7 @@ async function indexRepo(client, rootAbsPath, options) {
     stack: options.stack ?? "unknown"
   });
   const excludes = new Set(options.noDefaultExcludes ? [] : DEFAULT_EXCLUDES);
-  for (const e of options.extraExcludes ?? [])
-    excludes.add(e);
+  for (const e of options.extraExcludes ?? []) excludes.add(e);
   const files = await walkRepo(root, { excludes });
   const tsconfigs = await findTsconfigs(root, files);
   const composers = await findComposers(root, files);
@@ -945,8 +907,7 @@ async function indexRepo(client, rootAbsPath, options) {
   for (const rel of files) {
     const lang = detectLanguage(rel);
     fileLanguages.set(rel, lang);
-    if (lang === "other")
-      continue;
+    if (lang === "other") continue;
     indexedFileCount++;
     const fullPath = join5(root, rel);
     const source = await readFile3(fullPath, "utf8");
@@ -962,10 +923,8 @@ async function indexRepo(client, rootAbsPath, options) {
       const pkg = parseJavaPackage(source);
       moduleName = pkg ?? detectModule(rel);
       const fqn = javaFqnForFile(rel, pkg);
-      if (!javaTypeIndex.has(fqn))
-        javaTypeIndex.set(fqn, rel);
-      if (pkg)
-        javaPackages.add(pkg);
+      if (!javaTypeIndex.has(fqn)) javaTypeIndex.set(fqn, rel);
+      if (pkg) javaPackages.add(pkg);
     } else {
       moduleName = detectModule(rel);
     }
@@ -979,15 +938,21 @@ async function indexRepo(client, rootAbsPath, options) {
       await linkContains(client, options.db, "Repo", { name: repoName }, "Module", { path: moduleQualified });
       moduleNames.add(moduleQualified);
     }
-    await linkContains(client, options.db, "Module", { path: moduleQualified }, "File", { path: repoQualified });
+    await linkContains(
+      client,
+      options.db,
+      "Module",
+      { path: moduleQualified },
+      "File",
+      { path: repoQualified }
+    );
   }
   const knownFiles = new Set(fileLanguages.keys());
   let importsCount = 0;
   let unresolvedCount = 0;
   for (const rel of files) {
     const lang = fileLanguages.get(rel);
-    if (lang === "other")
-      continue;
+    if (lang === "other") continue;
     const fullPath = join5(root, rel);
     const source = await readFile3(fullPath, "utf8");
     const repoQualified = `${repoName}/${rel}`;
@@ -1035,8 +1000,7 @@ function resolveTsImport(spec, fromFile, tsconfigs, known) {
       const aliased = resolveAlias(spec, tsconfig);
       if (aliased) {
         const found = resolveWithExtensions(aliased, known);
-        if (found)
-          return found;
+        if (found) return found;
       }
     }
     return null;
@@ -1046,32 +1010,26 @@ function resolveTsImport(spec, fromFile, tsconfigs, known) {
 }
 function resolveWithExtensions(base, known) {
   const exts = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-  if (known.has(base))
-    return base;
+  if (known.has(base)) return base;
   for (const ext of exts) {
     const candidate = `${base}${ext}`;
-    if (known.has(candidate))
-      return candidate;
+    if (known.has(candidate)) return candidate;
   }
   for (const ext of exts) {
     const candidate = `${base}/index${ext}`;
-    if (known.has(candidate))
-      return candidate;
+    if (known.has(candidate)) return candidate;
   }
   return null;
 }
 function resolvePhpImport(spec, fromFile, composers, override, known) {
   if (override) {
     const candidate2 = resolvePsr4(spec, override);
-    if (candidate2 && known.has(candidate2))
-      return candidate2;
+    if (candidate2 && known.has(candidate2)) return candidate2;
   }
   const composer = composerForFile(fromFile, composers);
-  if (!composer)
-    return null;
+  if (!composer) return null;
   const candidate = resolvePsr4(spec, composer.psr4);
-  if (candidate && known.has(candidate))
-    return candidate;
+  if (candidate && known.has(candidate)) return candidate;
   return null;
 }
 
@@ -1090,7 +1048,7 @@ function captureLogPath() {
 
 // src/config.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, chmodSync } from "node:fs";
-import { dirname, join as join7 } from "node:path";
+import { dirname as dirname2, join as join7 } from "node:path";
 var DEFAULTS = {
   httpUri: "http://localhost:2480",
   username: "root",
@@ -1162,7 +1120,7 @@ function toClientEnv(cfg) {
 
 // src/auto-register.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename as basename2, dirname as dirname2, join as join8 } from "node:path";
+import { basename as basename2, dirname as dirname3, join as join8 } from "node:path";
 
 // src/project-map.ts
 import { readFileSync as readFileSync2, existsSync as existsSync2, realpathSync } from "node:fs";
@@ -1188,7 +1146,7 @@ function loadProjects(path, onError) {
 
 // src/auto-register.ts
 function writeProjectsFile(projectsPath, map) {
-  const dir = dirname2(projectsPath);
+  const dir = dirname3(projectsPath);
   if (!existsSync3(dir)) mkdirSync2(dir, { recursive: true });
   const tmp = `${projectsPath}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync2(tmp, JSON.stringify(map, null, 2) + "\n");
@@ -1214,11 +1172,11 @@ function stalePath() {
 
 // src/capture-log.ts
 import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync3 } from "node:fs";
-import { dirname as dirname3 } from "node:path";
+import { dirname as dirname4 } from "node:path";
 function logCapture(event, fields = {}) {
   try {
     const path = captureLogPath();
-    if (!existsSync4(dirname3(path))) mkdirSync3(dirname3(path), { recursive: true });
+    if (!existsSync4(dirname4(path))) mkdirSync3(dirname4(path), { recursive: true });
     appendFileSync(path, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
   } catch {
   }

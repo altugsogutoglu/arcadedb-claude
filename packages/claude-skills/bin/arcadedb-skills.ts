@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
-import { Client } from "arcadedb-agent-memory";
+import { Client } from "../src/agent-memory/index.js";
 import { markExtracted } from "../src/session-state.js";
 import { validateExtraction } from "../src/extractor-validator.js";
 import { buildVocabSnapshot } from "../src/vocab-snapshot.js";

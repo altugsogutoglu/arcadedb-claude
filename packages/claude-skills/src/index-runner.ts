@@ -3,8 +3,8 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, openSync, writeSyn
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Client } from "arcadedb-agent-memory";
-import { indexRepo } from "arcadedb-code-indexer";
+import { Client } from "./agent-memory/index.js";
+import { indexRepo } from "./code-indexer/index.js";
 import { configDir, projectsJsonPath } from "./env-paths.js";
 import { resolveConfig, toClientEnv } from "./config.js";
 import { updateProject } from "./auto-register.js";

@@ -1,4 +1,4 @@
-import { allSchemas } from "arcadedb-agent-memory";
+import { allSchemas } from "./agent-memory/index.js";
 
 export interface VocabSnapshot {
   vertexLabels: string[];

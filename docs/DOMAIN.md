@@ -21,4 +21,4 @@ AI coding agents are stateless. Decisions, insights, and cross-repo structure ev
 ## Competitors / adjacent
 
 - claude-mem: vector-only, hosted sync option. Reference point, not target.
-- Obsidian vault: user's second brain. Synced in via obsidian-to-arcadedb.
+- Obsidian vault: user's second brain. Synced in via the `obsidian-sync` CLI.

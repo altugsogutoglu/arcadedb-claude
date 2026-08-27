@@ -2,22 +2,9 @@ name: publish
 
 on:
   workflow_dispatch:
-    inputs:
-      package:
-        description: Package to publish
-        required: true
-        type: choice
-        options:
-          - claude-skills
-          - agent-memory
-          - code-indexer
-          - obsidian-sync
   push:
     tags:
-      - "v*-plugin"
-      - "v*-agent-memory"
-      - "v*-code-indexer"
-      - "v*-obsidian-sync"
+      - "v*"
 
 permissions:
   contents: read
@@ -37,22 +24,9 @@ jobs:
       # Trusted publishing (OIDC) needs npm >= 11.5.1
       - run: npm install -g npm@latest
 
-      - id: pkg
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            dir="${{ github.event.inputs.package }}"
-          else
-            suffix="${GITHUB_REF_NAME#v*-}"
-            case "$suffix" in
-              plugin) dir=claude-skills ;;
-              *) dir="$suffix" ;;
-            esac
-          fi
-          echo "dir=packages/$dir" >> "$GITHUB_OUTPUT"
-
       - run: npm ci
       - run: npm run build --workspaces --if-present
+      - run: npm test -w packages/claude-skills -- --run tests/index-barrel.test.ts tests/plugin-manifest.test.ts tests/hooks-wiring.test.ts
 
       - run: npm publish --provenance --access public
-        working-directory: ${{ steps.pkg.outputs.dir }}
+        working-directory: packages/claude-skills
