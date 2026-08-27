@@ -4,6 +4,12 @@ Keep a Changelog style. Newest on top. Since 0.8.0 there is one package: package
 
 ## [Unreleased]
 
+## arcadedb-claude-skills 0.9.1 - 2026-08-27
+
+### Fixed
+- An answer split across several assistant lines by tool calls is now stored as one `:Turn` instead of one fragment per line.
+- Extractor notes (Decision, Insight, Question, Answer) carry `repo` from the session state, so `search --repo` no longer hides them. `extract-replay [--repo <name>]` backfills existing notes.
+
 ## arcadedb-claude-skills 0.9.0 - 2026-08-27
 
 ### Changed

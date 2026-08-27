@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { Client } from "../src/agent-memory/index.js";
-import { markExtracted } from "../src/session-state.js";
+import { markExtracted, readSessionState } from "../src/session-state.js";
 import { validateExtraction } from "../src/extractor-validator.js";
 import { buildVocabSnapshot } from "../src/vocab-snapshot.js";
 import { writeDryrunBatch } from "../src/dryrun-writer.js";
@@ -30,11 +30,11 @@ function usage(): void {
   console.error("commands:");
   console.error("  mark-extracted --session <id> --turn <n>   update session state after extractor finishes");
   console.error("  extractor-prompt                           print the extractor system prompt");
-  console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>]");
+  console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>] [--repo <name>]");
   console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
   console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]   semantic search over captured memory");
   console.error("  embed install | status | run              manage the local embedding runtime");
-  console.error("  extract-replay <sessionDbId|audit.jsonl>  re-write a session's audited triples into the graph (repairs nodes written without text)");
+  console.error("  extract-replay <sessionDbId|audit.jsonl> [--repo <name>]  re-write a session's audited triples into the graph (repairs nodes written without text)");
 }
 
 async function main(): Promise<number> {
@@ -127,11 +127,13 @@ async function main(): Promise<number> {
     }
     const triples: Triple[] = [];
     let sessionDbId = flag(rest, "session");
+    let repo: string | null = flag(rest, "repo") ?? null;
     for (const line of readFileSync(auditPath, "utf8").split("\n")) {
       if (!line.trim()) continue;
-      let entry: { kind?: string; triple?: Triple; sessionDbId?: string };
+      let entry: { kind?: string; triple?: Triple; sessionDbId?: string; repo?: string | null };
       try { entry = JSON.parse(line); } catch { continue; }
       if (entry.kind === "batch" && entry.sessionDbId && !sessionDbId) sessionDbId = entry.sessionDbId;
+      if (entry.kind === "batch" && entry.repo && !repo) repo = entry.repo;
       if (entry.kind === "triple" && entry.triple) triples.push(entry.triple);
     }
     if (!sessionDbId) sessionDbId = target.replace(/^.*\//, "").replace(/\.jsonl$/, "");
@@ -143,6 +145,7 @@ async function main(): Promise<number> {
       memoryDb: db,
       naturalKeys: buildVocabSnapshot().naturalKeys,
       sessionDbId,
+      repo,
     });
     // Text may have changed under an existing embedding: clear it so the runner recomputes.
     let cleared = 0;
@@ -191,6 +194,7 @@ async function main(): Promise<number> {
 
     const raw = readFileSync(rawFile, "utf8");
     const vocab = buildVocabSnapshot();
+    const repo = flag(rest, "repo") ?? readSessionState(ccSession)?.repo ?? null;
     const result = validateExtraction(raw, vocab);
 
     if (!result.ok) {
@@ -206,6 +210,7 @@ async function main(): Promise<number> {
     writeDryrunBatch({
       sessionDbId,
       claudeCodeSessionId: ccSession,
+      repo,
       turnRange: turns,
       valid: result.valid,
       invalid: result.invalid,
@@ -224,6 +229,7 @@ async function main(): Promise<number> {
           memoryDb: resolveMemoryDb(cfg, map),
           naturalKeys: vocab.naturalKeys,
           sessionDbId,
+          repo,
         });
       } catch (e) {
         live = { written: 0, failed: result.valid.length, errors: [`live write unavailable: ${(e as Error).message}`] };

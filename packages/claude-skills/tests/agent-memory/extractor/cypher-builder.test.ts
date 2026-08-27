@@ -111,4 +111,17 @@ describe("buildExtractorCypher", () => {
       naturalKeys,
     })).toThrow(/no natural key/i);
   });
+
+  it("stamps the session repo on both nodes unless the triple sets one", () => {
+    const args = {
+      triple: { subject: { label: "Decision", props: { summary: "x" } }, verb: "ABOUT", object: { label: "Concept", props: { name: "y", repo: "own" } }, evidence: "" },
+      sessionDbId: "s1",
+      naturalKeys: { Decision: ["summary"], Concept: ["name"] },
+    };
+    const cy = buildExtractorCypher({ ...args, repo: "transprt.net" });
+    expect(cy).toContain('SET s.repo = coalesce(s.repo, "transprt.net")');
+    expect(cy).not.toContain('SET o.repo = coalesce');
+    expect(cy).toContain('o.repo = "own"');
+    expect(buildExtractorCypher(args)).not.toContain("coalesce(s.repo");
+  });
 });

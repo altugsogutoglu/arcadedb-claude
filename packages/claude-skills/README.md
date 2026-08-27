@@ -63,7 +63,7 @@ Triggers on phrases like "how does X work", "what calls Y", "decision about Z". 
 
 ### Session capture (on by default, no LLM)
 
-Every prompt you type and every answer Claude gives is written to the memory DB as a `:Turn` node (`DURING` the `:Session`) by the `Stop` hook. Pure code: no model call, no token cost, nothing summarised away. Tool calls, tool output and thinking are not stored.
+Every prompt you type and every answer Claude gives is written to the memory DB as a `:Turn` node (`DURING` the `:Session`) by the `Stop` hook. Pure code: no model call, no token cost, nothing summarised away. Tool calls, tool output and thinking are not stored; an answer interleaved with tool calls is stored as one Turn.
 
 ### Semantic search (on by default, local)
 
@@ -73,7 +73,7 @@ Turns and notes get a 384-dim embedding from `all-MiniLM-L6-v2` running locally 
 arcadedb-skills search "rental cost logic"            # top 10 across Turn/Decision/Insight/Q&A
 arcadedb-skills search "why one package" --types Turn --repo arcadedb-claude --limit 5 --json
 arcadedb-skills embed status | install | run          # runtime state, install now, embed pending nodes now
-arcadedb-skills extract-replay <sessionDbId>          # re-write an audited extractor batch (repair / re-embed)
+arcadedb-skills extract-replay <sessionDbId> [--repo X] # re-write an audited extractor batch (repair / re-embed / backfill repo)
 ```
 
 `/graph-query` uses this for fuzzy questions ("what did we say about X").

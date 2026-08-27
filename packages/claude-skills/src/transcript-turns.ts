@@ -48,7 +48,14 @@ export function parseTurnsFromText(raw: string, fromLine: number, toLine: number
       continue;
     }
     const turn = turnFromEntry(entry, i);
-    if (turn) out.push(turn);
+    if (!turn) continue;
+    const prev = out[out.length - 1];
+    // One answer is split across several assistant lines by tool calls; store it as one Turn.
+    if (prev && prev.role === "assistant" && turn.role === "assistant") {
+      prev.text = (prev.text + "\n\n" + turn.text).slice(0, MAX_TURN_CHARS);
+      continue;
+    }
+    out.push(turn);
   }
   return out;
 }

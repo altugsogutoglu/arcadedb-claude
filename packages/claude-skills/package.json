@@ -1,6 +1,6 @@
 {
   "name": "arcadedb-claude-skills",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Claude Code plugin for ArcadeDB: zero-config graph context per project, agent memory (decisions/insights/sessions), code indexer, Obsidian vault sync, slash commands. One package, pre-bundled hooks.",
   "license": "MIT",
   "type": "module",

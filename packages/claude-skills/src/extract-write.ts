@@ -6,6 +6,7 @@ export interface ExecDeps {
   memoryDb: string;
   naturalKeys: Record<string, string[]>;
   sessionDbId: string;
+  repo?: string | null;
 }
 
 export interface LiveResult {
@@ -24,6 +25,7 @@ export async function executeLiveBatch(valid: Triple[], deps: ExecDeps): Promise
         triple: { ...triple, evidence: triple.evidence ?? "" },
         sessionDbId: deps.sessionDbId,
         naturalKeys: deps.naturalKeys,
+        repo: deps.repo,
       });
       await deps.execute(deps.memoryDb, cypher);
       written += 1;

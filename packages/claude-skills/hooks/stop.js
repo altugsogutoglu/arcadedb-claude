@@ -261,7 +261,13 @@ function parseTurnsFromText(raw, fromLine, toLine) {
       continue;
     }
     const turn = turnFromEntry(entry, i);
-    if (turn) out.push(turn);
+    if (!turn) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev.role === "assistant" && turn.role === "assistant") {
+      prev.text = (prev.text + "\n\n" + turn.text).slice(0, MAX_TURN_CHARS);
+      continue;
+    }
+    out.push(turn);
   }
   return out;
 }

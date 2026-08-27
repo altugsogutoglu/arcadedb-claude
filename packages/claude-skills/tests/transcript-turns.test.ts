@@ -19,10 +19,14 @@ describe("parseTurnsFromText", () => {
     const turns = parseTurnsFromText(raw, 1, 100);
     expect(turns.map(t => [t.line, t.role, t.text])).toEqual([
       [2, "user", "why 3 packages?"],
-      [3, "assistant", "Can be one."],
-      [7, "assistant", "Done."],
+      [3, "assistant", "Can be one.\n\nDone."],
     ]);
     expect(turns[0]!.ts).toBe("2026-08-27T10:00:00.000Z");
+  });
+
+  it("keeps assistant lines separate once a user prompt sits between them", () => {
+    const raw = [assistant([{ type: "text", text: "A" }]), user("q"), assistant([{ type: "text", text: "B" }])].join("\n");
+    expect(parseTurnsFromText(raw, 1, 10).map(t => [t.role, t.text])).toEqual([["assistant", "A"], ["user", "q"], ["assistant", "B"]]);
   });
 
   it("respects the line window (1-based, inclusive)", () => {

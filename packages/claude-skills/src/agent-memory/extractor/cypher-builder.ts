@@ -8,6 +8,8 @@ export interface BuildArgs {
   };
   sessionDbId: string;
   naturalKeys: Record<string, string[]>;
+  /** Repo the session ran in; stamped on both nodes when they have none, so `search --repo` finds notes too. */
+  repo?: string | null;
 }
 
 function quote(v: unknown): string {
@@ -64,16 +66,22 @@ function onCreate(alias: string, label: string, props: Record<string, unknown>):
   return `ON CREATE SET ${alias}.firstSeenAt = datetime()${extra}`;
 }
 
+/** Stamp the session's repo on a note that has none (also backfills on replay); an explicit repo prop wins. */
+function setRepo(alias: string, props: Record<string, unknown>, repo?: string | null): string {
+  if (!repo || props["repo"] !== undefined) return "";
+  return `\nSET ${alias}.repo = coalesce(${alias}.repo, ${quote(repo)})`;
+}
+
 export function buildExtractorCypher(args: BuildArgs): string {
-  const { triple, sessionDbId, naturalKeys } = args;
+  const { triple, sessionDbId, naturalKeys, repo } = args;
   const sub = propsClause(triple.subject.label, triple.subject.props, naturalKeys);
   const obj = propsClause(triple.object.label, triple.object.props, naturalKeys);
   const conf = triple.confidence != null ? `,\n                r.confidence = ${triple.confidence}` : "";
 
   return `MERGE (s:${triple.subject.label} ${sub})
-  ${onCreate("s", triple.subject.label, triple.subject.props)}${setProps("s", triple.subject.label, triple.subject.props, naturalKeys)}
+  ${onCreate("s", triple.subject.label, triple.subject.props)}${setProps("s", triple.subject.label, triple.subject.props, naturalKeys)}${setRepo("s", triple.subject.props, repo)}
 MERGE (o:${triple.object.label} ${obj})
-  ${onCreate("o", triple.object.label, triple.object.props)}${setProps("o", triple.object.label, triple.object.props, naturalKeys)}
+  ${onCreate("o", triple.object.label, triple.object.props)}${setProps("o", triple.object.label, triple.object.props, naturalKeys)}${setRepo("o", triple.object.props, repo)}
 MERGE (s)-[r:${triple.verb}]->(o)
   ON CREATE SET r.firstAt = datetime(),
                 r.session = ${quote(sessionDbId)},

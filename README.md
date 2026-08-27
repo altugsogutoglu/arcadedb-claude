@@ -161,7 +161,7 @@ ARCADEDB_EXTRACTOR=off
 ```
 
 - `ARCADEDB_AUTO_INDEX` (default `on`): whether new or stale projects are indexed automatically in the background. Set to `off` (or `/arcadedb-config set auto-index off`) to index only via `/graph-index` or `/arcadedb-config index`.
-- `ARCADEDB_CAPTURE` (default `on`): every prompt and answer is stored as a `:Turn` node on the Stop hook. No LLM, no cost.
+- `ARCADEDB_CAPTURE` (default `on`): every prompt and answer is stored as a `:Turn` node on the Stop hook (one Turn per answer, even when tool calls split it). No LLM, no cost.
 - `ARCADEDB_EMBED` (default `on`): local `all-MiniLM-L6-v2` embeddings for `:Turn` and memory notes, runtime auto-installed into `~/.config/arcadedb/embed/` (~260 MB, once). Search with `arcadedb-skills search "<query>"`.
 - `ARCADEDB_EXTRACTOR` (default `off`): opt-in LLM subagent that distils decisions/insights/Q&A into graph triples every 10 turns. `live` or `dryrun`. Costs tokens per run.
 - `ARCADEDB_INDEX_MAX_FILES` (default `20000`): skips indexing a repo larger than this file count rather than blocking the session.

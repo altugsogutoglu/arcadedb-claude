@@ -8,6 +8,7 @@ import type { Triple, InvalidTriple } from "./extractor-validator.js";
 export interface DryrunBatchArgs {
   sessionDbId: string;
   claudeCodeSessionId: string;
+  repo?: string | null;
   turnRange: string;
   valid: Triple[];
   invalid: InvalidTriple[];
@@ -26,6 +27,7 @@ export function writeDryrunBatch(args: DryrunBatchArgs): void {
     kind: "batch",
     ts: new Date().toISOString(),
     claudeCodeSessionId: args.claudeCodeSessionId,
+    repo: args.repo ?? null,
     turnRange: args.turnRange,
     counts: {
       valid: args.valid.length,
@@ -42,6 +44,7 @@ export function writeDryrunBatch(args: DryrunBatchArgs): void {
         triple: { ...triple, evidence: triple.evidence ?? "" },
         sessionDbId: args.sessionDbId,
         naturalKeys: vocab.naturalKeys,
+        repo: args.repo,
       });
     } catch (e) {
       cypher = `// cypher-build error: ${(e as Error).message}`;

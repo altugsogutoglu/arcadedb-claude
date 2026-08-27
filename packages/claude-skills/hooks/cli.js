@@ -384,16 +384,21 @@ function onCreate(alias, label, props) {
   const extra = ts && props[ts] === void 0 ? `, ${alias}.${ts} = datetime()` : "";
   return `ON CREATE SET ${alias}.firstSeenAt = datetime()${extra}`;
 }
+function setRepo(alias, props, repo) {
+  if (!repo || props["repo"] !== void 0) return "";
+  return `
+SET ${alias}.repo = coalesce(${alias}.repo, ${quote(repo)})`;
+}
 function buildExtractorCypher(args) {
-  const { triple, sessionDbId, naturalKeys } = args;
+  const { triple, sessionDbId, naturalKeys, repo } = args;
   const sub = propsClause(triple.subject.label, triple.subject.props, naturalKeys);
   const obj = propsClause(triple.object.label, triple.object.props, naturalKeys);
   const conf = triple.confidence != null ? `,
                 r.confidence = ${triple.confidence}` : "";
   return `MERGE (s:${triple.subject.label} ${sub})
-  ${onCreate("s", triple.subject.label, triple.subject.props)}${setProps("s", triple.subject.label, triple.subject.props, naturalKeys)}
+  ${onCreate("s", triple.subject.label, triple.subject.props)}${setProps("s", triple.subject.label, triple.subject.props, naturalKeys)}${setRepo("s", triple.subject.props, repo)}
 MERGE (o:${triple.object.label} ${obj})
-  ${onCreate("o", triple.object.label, triple.object.props)}${setProps("o", triple.object.label, triple.object.props, naturalKeys)}
+  ${onCreate("o", triple.object.label, triple.object.props)}${setProps("o", triple.object.label, triple.object.props, naturalKeys)}${setRepo("o", triple.object.props, repo)}
 MERGE (s)-[r:${triple.verb}]->(o)
   ON CREATE SET r.firstAt = datetime(),
                 r.session = ${quote(sessionDbId)},
@@ -562,6 +567,7 @@ function writeDryrunBatch(args) {
     kind: "batch",
     ts: (/* @__PURE__ */ new Date()).toISOString(),
     claudeCodeSessionId: args.claudeCodeSessionId,
+    repo: args.repo ?? null,
     turnRange: args.turnRange,
     counts: {
       valid: args.valid.length,
@@ -576,7 +582,8 @@ function writeDryrunBatch(args) {
       cypher = buildExtractorCypher({
         triple: { ...triple, evidence: triple.evidence ?? "" },
         sessionDbId: args.sessionDbId,
-        naturalKeys: vocab.naturalKeys
+        naturalKeys: vocab.naturalKeys,
+        repo: args.repo
       });
     } catch (e) {
       cypher = `// cypher-build error: ${e.message}`;
@@ -605,7 +612,8 @@ async function executeLiveBatch(valid, deps) {
       const cypher = buildExtractorCypher({
         triple: { ...triple, evidence: triple.evidence ?? "" },
         sessionDbId: deps.sessionDbId,
-        naturalKeys: deps.naturalKeys
+        naturalKeys: deps.naturalKeys,
+        repo: deps.repo
       });
       await deps.execute(deps.memoryDb, cypher);
       written += 1;
@@ -1365,11 +1373,11 @@ function usage() {
   console.error("commands:");
   console.error("  mark-extracted --session <id> --turn <n>   update session state after extractor finishes");
   console.error("  extractor-prompt                           print the extractor system prompt");
-  console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>]");
+  console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>] [--repo <name>]");
   console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
   console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]   semantic search over captured memory");
   console.error("  embed install | status | run              manage the local embedding runtime");
-  console.error("  extract-replay <sessionDbId|audit.jsonl>  re-write a session's audited triples into the graph (repairs nodes written without text)");
+  console.error("  extract-replay <sessionDbId|audit.jsonl> [--repo <name>]  re-write a session's audited triples into the graph (repairs nodes written without text)");
 }
 async function main2() {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -1459,6 +1467,7 @@ async function main2() {
     }
     const triples = [];
     let sessionDbId = flag2(rest, "session");
+    let repo = flag2(rest, "repo") ?? null;
     for (const line of readFileSync7(auditPath, "utf8").split("\n")) {
       if (!line.trim()) continue;
       let entry;
@@ -1468,6 +1477,7 @@ async function main2() {
         continue;
       }
       if (entry.kind === "batch" && entry.sessionDbId && !sessionDbId) sessionDbId = entry.sessionDbId;
+      if (entry.kind === "batch" && entry.repo && !repo) repo = entry.repo;
       if (entry.kind === "triple" && entry.triple) triples.push(entry.triple);
     }
     if (!sessionDbId) sessionDbId = target.replace(/^.*\//, "").replace(/\.jsonl$/, "");
@@ -1478,7 +1488,8 @@ async function main2() {
       execute: (d, cypher) => client.execute(d, "cypher", cypher),
       memoryDb: db,
       naturalKeys: buildVocabSnapshot().naturalKeys,
-      sessionDbId
+      sessionDbId,
+      repo
     });
     let cleared = 0;
     for (const t of triples) {
@@ -1521,6 +1532,7 @@ async function main2() {
     };
     const raw = readFileSync7(rawFile, "utf8");
     const vocab = buildVocabSnapshot();
+    const repo = flag2(rest, "repo") ?? readSessionState(ccSession)?.repo ?? null;
     const result = validateExtraction(raw, vocab);
     if (!result.ok) {
       const path = extractorErrorsPath(sessionDbId, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"));
@@ -1536,6 +1548,7 @@ ${raw}`);
     writeDryrunBatch({
       sessionDbId,
       claudeCodeSessionId: ccSession,
+      repo,
       turnRange: turns,
       valid: result.valid,
       invalid: result.invalid,
@@ -1552,7 +1565,8 @@ ${raw}`);
           execute: (db, cypher) => client.execute(db, "cypher", cypher),
           memoryDb: resolveMemoryDb(cfg, map),
           naturalKeys: vocab.naturalKeys,
-          sessionDbId
+          sessionDbId,
+          repo
         });
       } catch (e) {
         live = { written: 0, failed: result.valid.length, errors: [`live write unavailable: ${e.message}`] };
