@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 
 export interface ProjectEntry {
@@ -50,7 +50,7 @@ export function findProject(
   gitRemoteUrl: string | null,
 ): FindResult | null {
   for (const [key, entry] of Object.entries(map.projects)) {
-    if (entry.path === cwd) return { key, entry };
+    if (samePath(entry.path, cwd)) return { key, entry };
   }
   const base = basename(cwd);
   if (map.projects[base]) return { key: base, entry: map.projects[base]! };
@@ -62,6 +62,17 @@ export function findProject(
     }
   }
   return null;
+}
+
+/** Resolves symlinks on both sides so a repo reached through a symlinked path still matches its registered entry. */
+function samePath(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    if (!existsSync(a) || !existsSync(b)) return false;
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
 }
 
 export function extractRemoteName(url: string): string | null {

@@ -32,9 +32,7 @@ A 4-package set that turns [ArcadeDB](https://arcadedb.com) into a first-class g
 
 All 4 packages are MIT, TypeScript, Node 20+.
 
-## Status
-
-v0.1.0, pre-release, GitHub-only. Not yet published to npm or to any Claude Code marketplace. npm publish planned for v0.2.
+Published on npm as `arcadedb-claude-skills`; the plugin installs from the `arcadedb-claude` Claude Code marketplace.
 
 ## Quick start
 
@@ -67,32 +65,25 @@ Claude sees this in its context so structural questions are answered from the gr
 | `/arcadedb-config [show \| set <key> <value> \| test \| forget <project> [--drop-db] \| index [<project>]]` | Show or change settings, test the connection, forget a project, or index now. The only manual knob. |
 | `/graph-decision "<summary>" --rationale "..." [--repo X]` | Record a Decision node |
 | `/graph-query "<question or cypher>"` | Query the graph in natural language or raw Cypher |
-| `/graph-index [--auto-migrate] [--stack X]` | Alias for `/arcadedb-config index` |
+| `/graph-index [<project>]` | Alias for `/arcadedb-config index` |
 | `/graph-status` | List databases, type counts, project mapping |
 
 ### Skill: arcadedb-graph
 
 Triggers on phrases like "how does X work", "what calls Y", "decision about Z". Tells Claude to query the graph first instead of reading files.
 
-### v1 LLM extraction (opt-in, dogfood)
+### Session capture (on by default)
 
-As of v0.5.0 the plugin can mine each session for structured triples — decisions, insights, Q&A pairs, blockers, fixes, entity mentions — using a Haiku-class subagent at rate-limited intervals. **It is off by default.**
+The plugin mines each session for structured triples: decisions, insights, Q&A pairs, blockers, fixes, entity mentions, using a Haiku-class subagent at rate-limited intervals. Since v0.6.0 it writes them into the graph by default.
 
-To opt in:
-
-```bash
-export ARCADEDB_EXTRACTOR=dryrun
-```
-
-(Either in your shell config, in `~/.claude/settings.json` under `env`, or in a project `.envrc` if you use direnv.)
-
-What happens when it's on:
+What happens:
 
 - Every 10 turns or 15 minutes (whichever first), the `Stop` hook emits a `decision:block` JSON that asks Claude to dispatch `Agent(subagent_type=extractor)`.
-- The extractor reads the recent transcript slice, applies the schema vocabulary, and **writes intended Cypher to `~/.config/arcadedb/dryrun/<sessionDbId>.jsonl`** — no DB writes in v1.
+- The extractor reads the recent transcript slice, applies the schema vocabulary, and hands the triples to `arcadedb-skills extract-write`.
+- Every batch is written to a JSONL audit file at `~/.config/arcadedb/dryrun/<sessionDbId>.jsonl`, whatever the mode. In `live` mode the triples are also written into the memory DB.
 - The session continues normally. Cost is ~$0.005 per extraction.
 
-To review what was extracted:
+To review what was captured:
 
 ```bash
 npx arcadedb-memory dryrun-review <sessionDbId>
@@ -100,13 +91,11 @@ npx arcadedb-memory dryrun-review <sessionDbId>
 
 Walks each triple with evidence, `a/r/s/q` prompts. Accepted triples accumulate in `~/.config/arcadedb/dryrun-accepted.jsonl`.
 
-**Promotion to v2 (live writes):** once 10 dogfood sessions hit ≥80% accept rate, the extractor will flip to live mode by default. Opt-out will then be `ARCADEDB_EXTRACTOR=off`. Track progress in `docs/superpowers/specs/2026-05-17-llm-extractor-design.md`.
-
 Environment variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ARCADEDB_EXTRACTOR` | unset (off) | Set to `dryrun` to opt into v1. |
+| `ARCADEDB_EXTRACTOR` | `live` | `live` writes to the graph, `dryrun` writes the JSONL audit batch only, `off` disables capture entirely. |
 | `ARCADEDB_EXTRACT_TURNS` | `10` | Trip after this many turns since last extract. |
 | `ARCADEDB_EXTRACT_INTERVAL_MS` | `900000` (15 min) | Trip after this much elapsed time. |
 
@@ -125,6 +114,7 @@ ARCADEDB_AUTO_INDEX=on
 
 - `ARCADEDB_AUTO_INDEX` (default `on`): whether new or stale projects are indexed automatically in the background. Set to `off` (or `/arcadedb-config set auto-index off`) to index only via `/graph-index` or `/arcadedb-config index`.
 - `ARCADEDB_INDEX_MAX_FILES` (default `20000`): skips indexing a repo larger than this file count rather than blocking the session.
+- Passwords passed to `/arcadedb-config set password <value>` go through the shell, so a value containing leading or trailing spaces, quotes, `$`, or backticks will not arrive intact. Edit `~/.config/arcadedb/.env` directly for such a password.
 
 `~/.config/arcadedb/projects.json` (project-to-database map), written automatically as projects register themselves:
 

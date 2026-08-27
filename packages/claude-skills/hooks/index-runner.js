@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/index-runner.ts
-import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, unlinkSync, openSync, writeSync, closeSync, realpathSync } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, unlinkSync, openSync, writeSync, closeSync, realpathSync as realpathSync2 } from "node:fs";
 import { execSync } from "node:child_process";
 import { join as join10 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,10 +27,13 @@ var DatabaseNotFoundError = class extends Error {
 };
 
 // ../agent-memory/dist/src/client.js
+var DEFAULT_TIMEOUT_MS = 1e4;
 var Client = class {
   env;
-  constructor(env) {
+  timeoutMs;
+  constructor(env, options = {}) {
     this.env = env;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
   authHeader() {
     return "Basic " + Buffer.from(`${this.env.username}:${this.env.password}`).toString("base64");
@@ -41,7 +44,8 @@ var Client = class {
       res = await fetch(`${this.env.httpUri}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: this.authHeader() },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs)
       });
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
@@ -71,7 +75,8 @@ var Client = class {
     let res;
     try {
       res = await fetch(`${this.env.httpUri}/api/v1/databases`, {
-        headers: { Authorization: this.authHeader() }
+        headers: { Authorization: this.authHeader() },
+        signal: AbortSignal.timeout(this.timeoutMs)
       });
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
@@ -1099,6 +1104,7 @@ var KEYS = {
   memoryDb: "ARCADEDB_MEMORY_DB",
   autoIndex: "ARCADEDB_AUTO_INDEX"
 };
+var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
   return join7(configDir(), ".env");
 }
@@ -1129,6 +1135,10 @@ function resolveConfig(opts = {}) {
   const username = pick(KEYS.username, processEnv, file, DEFAULTS.username);
   const password = pick(KEYS.password, processEnv, file, "");
   const memoryDb = pick(KEYS.memoryDb, processEnv, file, DEFAULTS.memoryDb);
+  if (!DB_NAME.test(memoryDb.value)) {
+    memoryDb.value = DEFAULTS.memoryDb;
+    memoryDb.source = "default";
+  }
   const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
@@ -1155,7 +1165,7 @@ import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as rea
 import { basename as basename2, dirname as dirname2, join as join8 } from "node:path";
 
 // src/project-map.ts
-import { readFileSync as readFileSync2, existsSync as existsSync2 } from "node:fs";
+import { readFileSync as readFileSync2, existsSync as existsSync2, realpathSync } from "node:fs";
 var DEFAULT_MAP = {
   version: 1,
   defaultMemoryDb: "claude_memory",
@@ -1270,9 +1280,19 @@ function countTrackedFiles(root) {
     return null;
   }
 }
-function pruneStale(path, key) {
+var STALE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+function pruneStale(path, key, now = Date.now()) {
   if (!existsSync5(path)) return;
-  const kept = readFileSync4(path, "utf8").split("\n").filter((l) => l && !new RegExp(`^\\[[^\\]]+\\] ${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(`).test(l));
+  const mine = new RegExp(`^\\[[^\\]]+\\] ${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(`);
+  const kept = readFileSync4(path, "utf8").split("\n").filter((l) => {
+    if (!l) return false;
+    if (mine.test(l)) return false;
+    const m = /^\[([^\]]+)\]/.exec(l);
+    if (!m) return true;
+    const ts = new Date(m[1]).getTime();
+    if (!Number.isFinite(ts)) return true;
+    return now - ts <= STALE_MAX_AGE_MS;
+  });
   writeFileSync3(path, kept.length ? kept.join("\n") + "\n" : "");
 }
 async function main() {
@@ -1282,7 +1302,7 @@ async function main() {
   const key = flag(argv, "key");
   const stack = flag(argv, "stack");
   if (!root || !db || !key) {
-    console.error("usage: index.js --root <abs> --db <db> --key <key> [--stack <csv>]");
+    console.error("usage: index-runner.js --root <abs> --db <db> --key <key> [--stack <csv>]");
     return 1;
   }
   const lock = join10(configDir(), `index-${key}.lock`);
@@ -1324,7 +1344,7 @@ function isDirectRun() {
   const entry = process.argv[1];
   if (!entry) return true;
   try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+    return realpathSync2(entry) === realpathSync2(fileURLToPath(import.meta.url));
   } catch {
     return true;
   }
@@ -1336,5 +1356,6 @@ if (isDirectRun()) {
   });
 }
 export {
-  acquireLock
+  acquireLock,
+  pruneStale
 };

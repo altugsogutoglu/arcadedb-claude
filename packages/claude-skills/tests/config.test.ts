@@ -27,6 +27,17 @@ describe("resolveConfig", () => {
     expect(cfg.sources.httpUri).toBe("file");
     expect(cfg.sources.username).toBe("default");
   });
+  it("falls back to the default memory DB when the configured name is not a legal database name", () => {
+    writeFileSync(join(dir, ".env"), "ARCADEDB_MEMORY_DB=Claude Memory!\n");
+    const cfg = resolveConfig({ envPath: join(dir, ".env"), processEnv: {} });
+    expect(cfg.memoryDb).toBe(DEFAULTS.memoryDb);
+    expect(cfg.sources.memoryDb).toBe("default");
+  });
+  it("keeps a legal memory DB name and reports its real source", () => {
+    const cfg = resolveConfig({ envPath: join(dir, ".env"), processEnv: { ARCADEDB_MEMORY_DB: "team_memory_2" } });
+    expect(cfg.memoryDb).toBe("team_memory_2");
+    expect(cfg.sources.memoryDb).toBe("env");
+  });
   it("process env overrides file", () => {
     writeFileSync(join(dir, ".env"), "ARCADEDB_HTTP_URI=http://db:9999\nARCADEDB_ROOT_PASSWORD=pw\n");
     const cfg = resolveConfig({ envPath: join(dir, ".env"), processEnv: { ARCADEDB_HTTP_URI: "http://env:1", ARCADEDB_MEMORY_DB: "mem2" } });

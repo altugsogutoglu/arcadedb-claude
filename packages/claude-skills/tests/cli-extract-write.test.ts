@@ -158,19 +158,24 @@ describe("arcadedb-skills extract-write (state + failures)", () => {
     expect(log).toContain('"lines":"1..200"');
   });
 
-  it("exits 1 and logs write_failed when live write is unreachable", async () => {
+  it("exits 1 and logs write_failed when live write is unreachable, using the process env server over the .env one", async () => {
     writeState("cc-10");
+    // The file names an unroutable TEST-NET host; the process env names a closed local port.
+    // Whichever the CLI honours shows up in the error message, so this pins the precedence.
     writeFileSync(join(tmpHome, ".config", "arcadedb", ".env"),
-      "ARCADEDB_HTTP_URI=http://127.0.0.1:1\nARCADEDB_USERNAME=root\nARCADEDB_ROOT_PASSWORD=x\n");
+      "ARCADEDB_HTTP_URI=http://192.0.2.1:2480\nARCADEDB_USERNAME=root\nARCADEDB_ROOT_PASSWORD=x\n");
     writeFileSync(join(tmpHome, ".config", "arcadedb", "projects.json"),
       JSON.stringify({ version: 1, defaultMemoryDb: "nope_db", projects: {} }));
-    const { code, stderr } = await runCli(
+    const { code, stderr, stdout } = await runCli(
       ["extract-write", "--raw", writeRaw(), "--session", "sess-9", "--cc-session", "cc-10",
        "--turns", "1..12", "--lines", "1..200", "--turn", "12", "--mode", "live"],
-      { HOME: tmpHome },
+      { HOME: tmpHome, ARCADEDB_HTTP_URI: "http://127.0.0.1:1" },
     );
     expect(code).toBe(1);
     expect(stderr).toMatch(/live write failed/i);
+    const out = JSON.parse(stdout);
+    expect(out.errors.join("\n")).toContain("http://127.0.0.1:1");
+    expect(out.errors.join("\n")).not.toContain("192.0.2.1");
     const log = readFileSync(join(tmpHome, ".config", "arcadedb", "capture.log"), "utf8");
     expect(log).toContain('"event":"write_failed"');
     // audit batch still written

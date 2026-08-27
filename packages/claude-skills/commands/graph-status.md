@@ -8,23 +8,27 @@ allowed-tools: Bash
 
 Quick status check on the local ArcadeDB instance and the project mapping.
 
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/hooks/cli.js" config show
+```
+
 ## Behavior
 
-1. Run `node "${CLAUDE_PLUGIN_ROOT}/hooks/cli.js" config show` and print the output (settings, server status, registered projects).
-2. If the current CWD matches a project entry, highlight it.
-3. Optional: if `arcadedb-memory` is available, also run `arcadedb-memory status` for a per-database type count.
+1. Run the command above and print its output as-is: every setting with its source, the server probe result, and the registered projects.
+2. If the current CWD matches one of the listed project paths, say which entry is the current one.
+3. If the probe line says the server is unreachable or unauthorized, tell the user which `/arcadedb-config set` command fixes it.
 
 ## Example output
 
 ```
-databases: claude_memory, project-a, project-b, project-c
-  claude_memory: 7 types
-  project-a: 9 types
-  project-b: 9 types
-  project-c: 9 types
-
-Projects:
-  project-a -> project-a (last indexed: 2026-05-17, ~/code/project-a) [CURRENT]
-  project-b -> project-b (last indexed: 2026-05-15, ~/code/project-b)
-  project-c -> project-c (never indexed, ~/code/project-c)
+ArcadeDB config (/Users/you/.config/arcadedb/.env)
+  server:     http://localhost:2480    (default)
+  user:       root                     (default)
+  password:   ********                 (file)
+  memory-db:  claude_memory            (default)
+  auto-index: on                       (default)
+Server: http://localhost:2480 (ok, 7 ms)
+Projects (2):
+  project-a -> project_a (indexed: 2026-08-27T09:12:44.101Z, stale edits: 0, /Users/you/code/project-a)
+  project-b -> project_b (indexed: never, stale edits: 3, /Users/you/code/project-b)
 ```

@@ -19,6 +19,7 @@ node "${CLAUDE_PLUGIN_ROOT}/hooks/cli.js" config ${ARGS:-show}
 
 - `config show`: every setting with its source, server status, registered projects.
 - `config set server http://host:port`, `config set user <name>`, `config set password <pw>`, `config set memory-db <name>`, `config set auto-index on|off`. Server/user/password changes print the probe result.
+  A `set password` value goes through the shell, so it must not contain leading or trailing spaces, quotes, `$`, or backticks; for such a password, edit `~/.config/arcadedb/.env` directly instead.
 - `config test`: probe the server and print the result.
 - `config forget <project> [--drop-db]`: remove a project from the registry. Before passing `--drop-db`, confirm with the user; it deletes the project's graph database.
 - `config index [<project>]`: index now, in the foreground (the plugin also does this automatically in the background).

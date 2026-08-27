@@ -18,7 +18,7 @@ function hookErrorLogPath() {
 }
 
 // src/project-map.ts
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 var DEFAULT_MAP = {
   version: 1,
@@ -41,7 +41,7 @@ function loadProjects(path, onError) {
 }
 function findProject(map, cwd, gitRemoteUrl) {
   for (const [key, entry] of Object.entries(map.projects)) {
-    if (entry.path === cwd) return { key, entry };
+    if (samePath(entry.path, cwd)) return { key, entry };
   }
   const base = basename(cwd);
   if (map.projects[base]) return { key: base, entry: map.projects[base] };
@@ -52,6 +52,15 @@ function findProject(map, cwd, gitRemoteUrl) {
     }
   }
   return null;
+}
+function samePath(a, b) {
+  if (a === b) return true;
+  try {
+    if (!existsSync(a) || !existsSync(b)) return false;
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
 }
 function extractRemoteName(url) {
   const m = url.match(/[/:]([\w.-]+?)(?:\.git)?\s*$/);

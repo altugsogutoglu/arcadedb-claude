@@ -71,9 +71,24 @@ function countTrackedFiles(root: string): number | null {
   }
 }
 
-function pruneStale(path: string, key: string): void {
+const STALE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Drops every line for `key` (just indexed, so nothing is stale any more) and, regardless of key,
+ * any line older than 30 days: those belong to projects that are gone or were indexed elsewhere.
+ */
+export function pruneStale(path: string, key: string, now: number = Date.now()): void {
   if (!existsSync(path)) return;
-  const kept = readFileSync(path, "utf8").split("\n").filter(l => l && !new RegExp(`^\\[[^\\]]+\\] ${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(`).test(l));
+  const mine = new RegExp(`^\\[[^\\]]+\\] ${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(`);
+  const kept = readFileSync(path, "utf8").split("\n").filter(l => {
+    if (!l) return false;
+    if (mine.test(l)) return false;
+    const m = /^\[([^\]]+)\]/.exec(l);
+    if (!m) return true;
+    const ts = new Date(m[1]!).getTime();
+    if (!Number.isFinite(ts)) return true;
+    return now - ts <= STALE_MAX_AGE_MS;
+  });
   writeFileSync(path, kept.length ? kept.join("\n") + "\n" : "");
 }
 
@@ -84,7 +99,7 @@ async function main(): Promise<number> {
   const key = flag(argv, "key");
   const stack = flag(argv, "stack");
   if (!root || !db || !key) {
-    console.error("usage: index.js --root <abs> --db <db> --key <key> [--stack <csv>]");
+    console.error("usage: index-runner.js --root <abs> --db <db> --key <key> [--stack <csv>]");
     return 1;
   }
   const lock = join(configDir(), `index-${key}.lock`);

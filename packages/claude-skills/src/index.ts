@@ -12,3 +12,4 @@ export type { ResolvedConfig } from "./config.js";
 export { probeServer, probeBanner } from "./server-probe.js";
 export type { ProbeResult, ProbeStatus } from "./server-probe.js";
 export { decideIndexNeed, staleEditsSince } from "./index-need.js";
+export { resolveMemoryDb } from "./memory-db.js";

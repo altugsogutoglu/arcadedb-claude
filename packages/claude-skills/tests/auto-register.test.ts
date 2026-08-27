@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   deriveProjectIdentity,
+  toDbName,
   detectStack,
   registerProject,
   updateProject,
@@ -223,5 +224,18 @@ describe("gitToplevel", () => {
 
   it("is null for a nonexistent dir", () => {
     expect(gitToplevel(join(dir, "nope"))).toBe(null);
+  });
+});
+
+describe("toDbName", () => {
+  it("sanitizes a normal key", () => {
+    expect(toDbName("My-App.next")).toBe("my_app_next");
+  });
+  it("prefixes a key that would start with a digit", () => {
+    expect(toDbName("2way2-app")).toBe("p_2way2_app");
+  });
+  it("returns p_project when the key sanitizes to nothing", () => {
+    expect(toDbName("...")).toBe("p_project");
+    expect(toDbName("---")).toBe("p_project");
   });
 });

@@ -3,6 +3,7 @@ import { Client } from "arcadedb-agent-memory";
 import { resolveConfig, toClientEnv, writeEnvFile } from "./config.js";
 import { probeServer, probeBanner } from "./server-probe.js";
 import { loadProjects, findProject } from "./project-map.js";
+import { resolveMemoryDb } from "./memory-db.js";
 import { projectsJsonPath } from "./env-paths.js";
 import { removeProject } from "./auto-register.js";
 import { staleEditsSince, stalePath } from "./index-need.js";
@@ -25,7 +26,7 @@ function pad(s: string, n: number): string {
 export async function configShow(io: Io): Promise<number> {
   const cfg = resolveConfig();
   const map = loadProjects(projectsJsonPath());
-  const memoryDb = cfg.sources.memoryDb === "default" ? map.defaultMemoryDb : cfg.memoryDb;
+  const memoryDb = resolveMemoryDb(cfg, map);
   io.out(`ArcadeDB config (${cfg.envPath})`);
   io.out(`  ${pad("server:", 12)}${pad(cfg.httpUri, 24)}(${cfg.sources.httpUri})`);
   io.out(`  ${pad("user:", 12)}${pad(cfg.username, 24)}(${cfg.sources.username})`);
@@ -34,7 +35,7 @@ export async function configShow(io: Io): Promise<number> {
   io.out(`  ${pad("auto-index:", 12)}${pad(cfg.autoIndex ? "on" : "off", 24)}(${cfg.sources.autoIndex})`);
   const probe = await probeServer(toClientEnv(cfg));
   const bannerLines = probeBanner(probe, cfg.username);
-  io.out(probe.status === "ok" ? bannerLines[0]!.replace(/^ {2}/, "") : `Server: ${bannerLines[0]}`);
+  io.out(probe.status === "ok" ? bannerLines[0]!.replace(/^ {2}/, "") : bannerLines[0]!);
   const keys = Object.keys(map.projects);
   io.out(`Projects (${keys.length}):`);
   for (const key of keys) {

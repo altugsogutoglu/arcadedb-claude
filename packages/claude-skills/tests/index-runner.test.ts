@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { Client, applySchemas } from "arcadedb-agent-memory";
 import { createTempDb, env, type TempDb } from "./helpers/temp-db.js";
-import { acquireLock } from "../src/index-runner.js";
+import { acquireLock, pruneStale } from "../src/index-runner.js";
 
 const require = createRequire(import.meta.url);
 const tsxBin = require.resolve("tsx/cli");
@@ -115,5 +115,29 @@ describe("acquireLock", () => {
     writeFileSync(path, "999999");
     expect(acquireLock(path)).toBe(true);
     expect(readFileSync(path, "utf8")).toBe(String(process.pid));
+  });
+});
+
+describe("pruneStale", () => {
+  it("drops every line for the indexed key and any line older than 30 days for other keys", () => {
+    const path = join(home, ".config", "arcadedb", "prune.log");
+    const now = Date.parse("2026-08-27T00:00:00.000Z");
+    const recentOther = "[2026-08-20T00:00:00.000Z] other (cwd=/y)";
+    const oldOther = "[2026-01-01T00:00:00.000Z] other (cwd=/y)";
+    const oldThird = "[2025-12-01T00:00:00.000Z] third (cwd=/z)";
+    writeFileSync(path, [
+      "[2026-08-26T00:00:00.000Z] proj (cwd=/x)",
+      recentOther,
+      oldOther,
+      oldThird,
+    ].join("\n") + "\n");
+
+    pruneStale(path, "proj", now);
+
+    expect(readFileSync(path, "utf8")).toBe(recentOther + "\n");
+  });
+
+  it("is a no-op when the log does not exist", () => {
+    expect(() => pruneStale(join(home, ".config", "arcadedb", "missing.log"), "proj")).not.toThrow();
   });
 });

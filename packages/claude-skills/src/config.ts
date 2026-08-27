@@ -35,6 +35,8 @@ const KEYS = {
   autoIndex: "ARCADEDB_AUTO_INDEX",
 } as const;
 
+export const DB_NAME = /^[a-z][a-z0-9_]*$/;
+
 export function envFilePath(): string {
   return join(configDir(), ".env");
 }
@@ -93,6 +95,11 @@ export function resolveConfig(opts: { envPath?: string; processEnv?: NodeJS.Proc
   const username = pick(KEYS.username, processEnv, file, DEFAULTS.username);
   const password = pick(KEYS.password, processEnv, file, "");
   const memoryDb = pick(KEYS.memoryDb, processEnv, file, DEFAULTS.memoryDb);
+  // A database name that ArcadeDB cannot address is worse than the default: fall back rather than fail every write.
+  if (!DB_NAME.test(memoryDb.value)) {
+    memoryDb.value = DEFAULTS.memoryDb;
+    memoryDb.source = "default";
+  }
   const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),

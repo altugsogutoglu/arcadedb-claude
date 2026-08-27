@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { Client, loadEnv, endSession } from "arcadedb-agent-memory";
+import { Client, endSession } from "arcadedb-agent-memory";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { loadProjects } from "./project-map.js";
+import { resolveConfig, toClientEnv } from "./config.js";
+import { resolveMemoryDb } from "./memory-db.js";
 import { readSessionState } from "./session-state.js";
 import { readHookInput } from "./hook-input.js";
 
@@ -16,10 +18,10 @@ async function main(): Promise<void> {
   if (!state) return;
 
   const map = loadProjects(projectsJsonPath(), logError);
-  const env = loadEnv();
-  const client = new Client(env);
+  const cfg = resolveConfig();
+  const client = new Client(toClientEnv(cfg));
 
-  await endSession(client, map.defaultMemoryDb, state.sessionDbId);
+  await endSession(client, resolveMemoryDb(cfg, map), state.sessionDbId);
 }
 
 function logError(err: unknown): void {

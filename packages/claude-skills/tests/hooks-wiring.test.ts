@@ -36,7 +36,13 @@ describe("hooks.json", () => {
     expect(existsSync(join(__dirname, "..", "hooks", "cli.js"))).toBe(true);
   });
 
-  it("ships a bundled indexer at hooks/index.js", () => {
-    expect(existsSync(join(__dirname, "..", "hooks", "index.js"))).toBe(true);
+  it("ships a bundled indexer at hooks/index-runner.js and no stale hooks/index.js", () => {
+    expect(existsSync(join(__dirname, "..", "hooks", "index-runner.js"))).toBe(true);
+    expect(existsSync(join(__dirname, "..", "hooks", "index.js"))).toBe(false);
+  });
+
+  it("gives the SessionStart command hook an explicit 15 second timeout", () => {
+    const cmd = cfg.hooks?.SessionStart?.[0]?.hooks?.find((h: { type: string }) => h.type === "command");
+    expect(cmd?.timeout).toBe(15);
   });
 });

@@ -11,11 +11,13 @@ import {
   applySchemas,
 } from "arcadedb-agent-memory";
 import { ensureEnvFile, resolveConfig, toClientEnv } from "./config.js";
+import { resolveMemoryDb } from "./memory-db.js";
 import { probeServer, probeBanner } from "./server-probe.js";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { loadProjects, findProject, type FindResult, type ProjectEntry } from "./project-map.js";
 import {
   deriveProjectIdentity,
+  type ProjectIdentity,
   detectStack,
   registerProject,
   gitToplevel,
@@ -41,8 +43,7 @@ async function main(): Promise<void> {
   ensureEnvFile();
   const map = loadProjects(projectsJsonPath(), logError);
   const cfg = resolveConfig();
-  // projects.json's defaultMemoryDb stays authoritative unless ARCADEDB_MEMORY_DB is set explicitly.
-  const memoryDb = cfg.sources.memoryDb === "default" ? map.defaultMemoryDb : cfg.memoryDb;
+  const memoryDb = resolveMemoryDb(cfg, map);
 
   const probe = await probeServer(toClientEnv(cfg));
   if (probe.status !== "ok") {
@@ -67,9 +68,10 @@ async function main(): Promise<void> {
   let autoRegistered = false;
   const toplevel = match ? null : gitToplevel(cwd);
   if (toplevel) {
-    // Register the repo root, not the subdirectory this session happens to start in.
-    const identity = deriveProjectIdentity(toplevel, remote);
+    let identity: ProjectIdentity | null = null;
     try {
+      // Register the repo root, not the subdirectory this session happens to start in.
+      identity = deriveProjectIdentity(toplevel, remote);
       const stored = map.projects[identity.key];
       if (stored) {
         // The key is already registered under a path findProject could not match from here.
@@ -96,7 +98,7 @@ async function main(): Promise<void> {
     } catch (err) {
       logError(err);
       logCapture("project_register_failed", {
-        key: identity.key,
+        key: identity?.key,
         reason: err instanceof RegistrationError ? err.reason : undefined,
         error: (err as Error)?.message ?? String(err),
       });

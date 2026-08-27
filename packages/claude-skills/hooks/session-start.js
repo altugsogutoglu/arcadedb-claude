@@ -27,10 +27,13 @@ var DatabaseNotFoundError = class extends Error {
 };
 
 // ../agent-memory/dist/src/client.js
+var DEFAULT_TIMEOUT_MS = 1e4;
 var Client = class {
   env;
-  constructor(env) {
+  timeoutMs;
+  constructor(env, options = {}) {
     this.env = env;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
   authHeader() {
     return "Basic " + Buffer.from(`${this.env.username}:${this.env.password}`).toString("base64");
@@ -41,7 +44,8 @@ var Client = class {
       res = await fetch(`${this.env.httpUri}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: this.authHeader() },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs)
       });
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
@@ -71,7 +75,8 @@ var Client = class {
     let res;
     try {
       res = await fetch(`${this.env.httpUri}/api/v1/databases`, {
-        headers: { Authorization: this.authHeader() }
+        headers: { Authorization: this.authHeader() },
+        signal: AbortSignal.timeout(this.timeoutMs)
       });
     } catch (cause) {
       throw new ArcadeDBConnectionError(this.env.httpUri, cause);
@@ -433,6 +438,7 @@ var KEYS = {
   memoryDb: "ARCADEDB_MEMORY_DB",
   autoIndex: "ARCADEDB_AUTO_INDEX"
 };
+var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
   return join3(configDir(), ".env");
 }
@@ -481,6 +487,10 @@ function resolveConfig(opts = {}) {
   const username = pick(KEYS.username, processEnv, file, DEFAULTS.username);
   const password = pick(KEYS.password, processEnv, file, "");
   const memoryDb = pick(KEYS.memoryDb, processEnv, file, DEFAULTS.memoryDb);
+  if (!DB_NAME.test(memoryDb.value)) {
+    memoryDb.value = DEFAULTS.memoryDb;
+    memoryDb.source = "default";
+  }
   const autoIndexRaw = pick(KEYS.autoIndex, processEnv, file, DEFAULTS.autoIndex ? "on" : "off");
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
@@ -500,6 +510,11 @@ function resolveConfig(opts = {}) {
 }
 function toClientEnv(cfg) {
   return { httpUri: cfg.httpUri, username: cfg.username, password: cfg.password };
+}
+
+// src/memory-db.ts
+function resolveMemoryDb(cfg, map) {
+  return cfg.sources.memoryDb === "default" ? map.defaultMemoryDb : cfg.memoryDb;
 }
 
 // src/server-probe.ts
@@ -547,7 +562,7 @@ function probeBanner(r, username) {
 }
 
 // src/project-map.ts
-import { readFileSync as readFileSync2, existsSync as existsSync2 } from "node:fs";
+import { readFileSync as readFileSync2, existsSync as existsSync2, realpathSync } from "node:fs";
 import { basename } from "node:path";
 var DEFAULT_MAP = {
   version: 1,
@@ -570,7 +585,7 @@ function loadProjects(path, onError) {
 }
 function findProject(map, cwd, gitRemoteUrl) {
   for (const [key, entry] of Object.entries(map.projects)) {
-    if (entry.path === cwd) return { key, entry };
+    if (samePath(entry.path, cwd)) return { key, entry };
   }
   const base = basename(cwd);
   if (map.projects[base]) return { key: base, entry: map.projects[base] };
@@ -581,6 +596,15 @@ function findProject(map, cwd, gitRemoteUrl) {
     }
   }
   return null;
+}
+function samePath(a, b) {
+  if (a === b) return true;
+  try {
+    if (!existsSync2(a) || !existsSync2(b)) return false;
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
 }
 function extractRemoteName(url) {
   const m = url.match(/[/:]([\w.-]+?)(?:\.git)?\s*$/);
@@ -597,6 +621,7 @@ function deriveProjectIdentity(cwd, gitRemoteUrl) {
 }
 function toDbName(key) {
   const sanitized = key.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!sanitized) return "p_project";
   return /^[0-9]/.test(sanitized) ? `p_${sanitized}` : sanitized;
 }
 var NEXT_CONFIGS = ["next.config.js", "next.config.mjs", "next.config.ts"];
@@ -798,13 +823,19 @@ function decideIndexNeed(entry, key, path, autoIndex) {
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname4, join as join6 } from "node:path";
+import { basename as basename3, dirname as dirname4, join as join6 } from "node:path";
 import { fileURLToPath } from "node:url";
+function resolveRunner(here, pluginRoot) {
+  if (pluginRoot) return join6(pluginRoot, "hooks", "index-runner.js");
+  if (here.endsWith(".ts")) return join6(dirname4(here), "index-runner.ts");
+  const dir = dirname4(here);
+  if (basename3(dir) === "src" && basename3(dirname4(dir)) === "dist") {
+    return join6(dir, "..", "..", "hooks", "index-runner.js");
+  }
+  return join6(dir, "index-runner.js");
+}
 function runnerPath() {
-  const root = process.env["CLAUDE_PLUGIN_ROOT"];
-  if (root) return join6(root, "hooks", "index.js");
-  const here = fileURLToPath(import.meta.url);
-  return here.endsWith(".ts") ? join6(dirname4(here), "index-runner.ts") : join6(dirname4(here), "index.js");
+  return resolveRunner(fileURLToPath(import.meta.url), process.env["CLAUDE_PLUGIN_ROOT"] || void 0);
 }
 function runnerArgv(runner, args) {
   const argv = runner.endsWith(".ts") ? [createRequire(import.meta.url).resolve("tsx/cli"), runner] : [runner];
@@ -846,7 +877,7 @@ async function main() {
   ensureEnvFile();
   const map = loadProjects(projectsJsonPath(), logError);
   const cfg = resolveConfig();
-  const memoryDb = cfg.sources.memoryDb === "default" ? map.defaultMemoryDb : cfg.memoryDb;
+  const memoryDb = resolveMemoryDb(cfg, map);
   const probe = await probeServer(toClientEnv(cfg));
   if (probe.status !== "ok") {
     logCapture("server_unavailable", { status: probe.status, httpUri: probe.httpUri, detail: probe.detail });
@@ -867,8 +898,9 @@ async function main() {
   let autoRegistered = false;
   const toplevel = match ? null : gitToplevel(cwd);
   if (toplevel) {
-    const identity = deriveProjectIdentity(toplevel, remote);
+    let identity = null;
     try {
+      identity = deriveProjectIdentity(toplevel, remote);
       const stored = map.projects[identity.key];
       if (stored) {
         project = { key: identity.key, entry: stored };
@@ -892,7 +924,7 @@ async function main() {
     } catch (err) {
       logError(err);
       logCapture("project_register_failed", {
-        key: identity.key,
+        key: identity?.key,
         reason: err instanceof RegistrationError ? err.reason : void 0,
         error: err?.message ?? String(err)
       });

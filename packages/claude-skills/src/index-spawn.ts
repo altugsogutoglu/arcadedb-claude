@@ -1,16 +1,30 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDir } from "./env-paths.js";
 
+/**
+ * Where the indexer entry point lives, given the module doing the asking.
+ *  - plugin install: <CLAUDE_PLUGIN_ROOT>/hooks/index-runner.js
+ *  - source (tests via tsx): src/index-spawn.ts -> src/index-runner.ts
+ *  - hooks bundle: hooks/session-start.js -> hooks/index-runner.js (sibling)
+ *  - tsc output: dist/src/index-spawn.js -> ../../hooks/index-runner.js
+ */
+export function resolveRunner(here: string, pluginRoot?: string): string {
+  if (pluginRoot) return join(pluginRoot, "hooks", "index-runner.js");
+  if (here.endsWith(".ts")) return join(dirname(here), "index-runner.ts");
+  const dir = dirname(here);
+  // dist/src/*.js is compiled output; the runner bundle stays next to the other hooks.
+  if (basename(dir) === "src" && basename(dirname(dir)) === "dist") {
+    return join(dir, "..", "..", "hooks", "index-runner.js");
+  }
+  return join(dir, "index-runner.js");
+}
+
 export function runnerPath(): string {
-  const root = process.env["CLAUDE_PLUGIN_ROOT"];
-  if (root) return join(root, "hooks", "index.js");
-  const here = fileURLToPath(import.meta.url);
-  // Bundled: hooks/session-start.js -> hooks/index.js. Source (tests via tsx): src/index-spawn.ts -> run src/index-runner.ts through tsx.
-  return here.endsWith(".ts") ? join(dirname(here), "index-runner.ts") : join(dirname(here), "index.js");
+  return resolveRunner(fileURLToPath(import.meta.url), process.env["CLAUDE_PLUGIN_ROOT"] || undefined);
 }
 
 /** Build the full argv for running `runner`, prefixing the tsx CLI when the runner is a .ts source file (under tsx, not bundled). */

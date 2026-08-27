@@ -13,8 +13,10 @@ export function deriveProjectIdentity(cwd: string, gitRemoteUrl: string | null):
   return { key, db: toDbName(key) };
 }
 
-function toDbName(key: string): string {
+export function toDbName(key: string): string {
   const sanitized = key.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  // A key of only punctuation sanitizes to "": an empty database name is not addressable.
+  if (!sanitized) return "p_project";
   return /^[0-9]/.test(sanitized) ? `p_${sanitized}` : sanitized;
 }
 

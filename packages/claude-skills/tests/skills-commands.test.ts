@@ -63,16 +63,22 @@ describe("command: graph-index", () => {
   it("passes $ARGUMENTS through bare so Claude Code's substitution works", () => {
     expect(md).toContain("config index $ARGUMENTS");
   });
+  it("documents only the optional project key, no invented flags", () => {
+    expect(md).toContain("[<project>]");
+    expect(md).not.toContain("--auto-migrate");
+    expect(md).not.toContain("--stack");
+  });
 });
 
 describe("command: graph-status", () => {
   const md = readFile("commands/graph-status.md");
-  it("has frontmatter and references arcadedb-memory status", () => {
+  it("has frontmatter and drives the bundled cli's config show", () => {
     expect(md).toMatch(/^---/);
-    expect(md).toMatch(/arcadedb-memory status/);
-  });
-  it("also references config show", () => {
+    expect(md).toContain("${CLAUDE_PLUGIN_ROOT}/hooks/cli.js");
     expect(md).toContain("config show");
+  });
+  it("does not reference the non-existent arcadedb-memory status command", () => {
+    expect(md).not.toContain("arcadedb-memory status");
   });
 });
 

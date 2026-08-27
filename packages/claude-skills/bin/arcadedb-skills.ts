@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
-import { Client, loadEnv } from "arcadedb-agent-memory";
+import { Client } from "arcadedb-agent-memory";
 import { markExtracted } from "../src/session-state.js";
 import { validateExtraction } from "../src/extractor-validator.js";
 import { buildVocabSnapshot } from "../src/vocab-snapshot.js";
 import { writeDryrunBatch } from "../src/dryrun-writer.js";
 import { executeLiveBatch } from "../src/extract-write.js";
 import { loadProjects } from "../src/project-map.js";
+import { resolveConfig, toClientEnv } from "../src/config.js";
+import { resolveMemoryDb } from "../src/memory-db.js";
 import { projectsJsonPath, extractorErrorsPath } from "../src/env-paths.js";
 import { buildExtractorSystemPrompt } from "../src/extractor-prompt.js";
 import { logCapture } from "../src/capture-log.js";
@@ -107,10 +109,11 @@ async function main(): Promise<number> {
     if (mode === "live") {
       try {
         const map = loadProjects(projectsJsonPath());
-        const client = new Client(loadEnv());
+        const cfg = resolveConfig();
+        const client = new Client(toClientEnv(cfg));
         live = await executeLiveBatch(result.valid, {
           execute: (db, cypher) => client.execute(db, "cypher", cypher),
-          memoryDb: map.defaultMemoryDb,
+          memoryDb: resolveMemoryDb(cfg, map),
           naturalKeys: vocab.naturalKeys,
           sessionDbId,
         });
