@@ -8,7 +8,7 @@ allowed-tools: Bash
 
 This project has an ArcadeDB graph with two databases:
 - The **project graph** (named in `~/.config/arcadedb/projects.json`) holds code intelligence: `:Repo`, `:Module`, `:File`, `:Class`, `:Function`, `:Route`, `:Component`, `:Person`; edges `:CONTAINS`, `:IMPORTS`, `:CALLS`, `:EXTENDS`, `:IMPLEMENTS`, `:HANDLES`, `:RENDERS`.
-- The **memory graph** (default: `claude_memory`) holds agent context: `:Turn` (every prompt and answer, raw), `:Decision`, `:Insight`, `:Session`, `:Question`, `:Answer`; edges `:ABOUT`, `:DURING`, `:FOLLOWS`, `:ANSWERS`, `:SUPERSEDES`. `:Turn` and the note types carry a local `embedding`; `node ${CLAUDE_PLUGIN_ROOT}/hooks/cli.js search "<question>"` ranks them by meaning.
+- The **memory graph** (default: `claude_memory`) holds agent context: `:Turn` (every prompt and answer, raw), `:Decision`, `:Insight`, `:Session`, `:Question`, `:Answer`; edges `:ABOUT`, `:DURING`, `:FOLLOWS`, `:ANSWERS`, `:SUPERSEDES`. `:Turn` and the note types carry a local `embedding` and a FULL_TEXT index; each `:Turn` `-[:MENTIONS]->` `:Ref` nodes (`kind` path|symbol|commit|ticket|url, `value`) extracted without a model. `node ${CLAUDE_PLUGIN_ROOT}/hooks/cli.js search "<question>"` fuses vector, full-text and ref lookup and returns hits with session context and related turns across repos; `... refs <value>` lists every turn naming a file, class, commit or ticket.
 
 Run `mcp__arcadedb__get_schema database=<db-name>` (or `/graph-status`) to confirm which types actually exist in your DB — the indexer only writes types the parser populates, so `:Function`/`:Class`/`:Route`/`:Component` may be absent until call-graph / route extraction lands.
 
@@ -64,6 +64,7 @@ After a non-obvious decision in conversation, use `/graph-decision "<summary>" -
 | `:Route` | code | `path`, `method`, `framework` |
 | `:Component` | code | `name`, `path`, `kind` |
 | `:Turn` | memory | `id` (pk), `sessionId`, `idx`, `role` (user/assistant), `text`, `ts`, `repo`, `embedding` |
+| `:Ref` | memory | `id` (pk, `kind:value`), `kind` (path/symbol/commit/ticket/url), `value`; `(:Turn)-[:MENTIONS]->(:Ref)` |
 | `:Session` | memory | `id` (pk), `startedAt`, `endedAt`, `repo`, `summary` |
 | `:Decision` | memory | `id` (pk), `summary`, `rationale`, `decidedAt`, `repo` |
 | `:Insight` | memory | `id` (pk), `topic`, `text`, `createdAt`, `repo` |

@@ -19,4 +19,13 @@ describe("memory schema vectors", () => {
     }
     expect(EMBEDDING_DIMENSIONS).toBe(384);
   });
+
+  it("gives every searchable text property a FULL_TEXT index and declares Ref/MENTIONS", () => {
+    for (const [t, p] of [["Turn", "text"], ["Decision", "summary"], ["Decision", "rationale"], ["Insight", "topic"], ["Insight", "text"], ["Question", "text"], ["Answer", "text"]]) {
+      expect(stmts).toContain(`CREATE INDEX IF NOT EXISTS ON ${t}(${p}) FULL_TEXT`);
+    }
+    expect(stmts).toContain("CREATE VERTEX TYPE Ref IF NOT EXISTS");
+    expect(stmts).toContain("CREATE INDEX IF NOT EXISTS ON Ref(id) UNIQUE");
+    expect(stmts).toContain("CREATE EDGE TYPE MENTIONS IF NOT EXISTS");
+  });
 });

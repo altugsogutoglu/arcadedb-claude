@@ -17,7 +17,9 @@ import { logCapture } from "../src/capture-log.js";
 import { configShow, configSet, configTest, configForget, configIndex, SET_KEY_NAMES } from "../src/config-cli.js";
 import { embedStatus, embedDir, loadEmbedder, spawnEmbedInstall } from "../src/embed.js";
 import { embedPending } from "../src/embed-runner.js";
-import { semanticSearch, formatHits } from "../src/search.js";
+import { hybridSearch, formatHits, type SearchMode } from "../src/search.js";
+import { backfillRefs } from "../src/turn-capture.js";
+import { backfillFullText } from "../src/agent-memory/migrations/fulltext.js";
 import { EMBEDDED_TYPES, type EmbeddedType } from "../src/agent-memory/index.js";
 
 function flag(argv: string[], name: string): string | undefined {
@@ -32,7 +34,9 @@ function usage(): void {
   console.error("  extractor-prompt                           print the extractor system prompt");
   console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>] [--repo <name>]");
   console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
-  console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]   semantic search over captured memory");
+  console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
+  console.error("  search reindex                             re-index existing rows for full-text search (one-off after upgrade)");
+  console.error("  refs backfill | <value>                    link :Ref nodes for old turns | list turns naming a path/symbol/commit/ticket");
   console.error("  embed install | status | run              manage the local embedding runtime");
   console.error("  extract-replay <sessionDbId|audit.jsonl> [--repo <name>]  re-write a session's audited triples into the graph (repairs nodes written without text)");
 }
@@ -62,14 +66,29 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  if (cmd === "search" && rest[0] === "reindex") {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const pairs: [string, string][] = [["Turn", "text"], ["Decision", "summary"], ["Decision", "rationale"], ["Insight", "topic"], ["Insight", "text"], ["Question", "text"], ["Answer", "text"]];
+    for (const [type, prop] of pairs) {
+      const n = await backfillFullText(client, db, type, prop);
+      console.log(`${type}.${prop}: ${n} rows re-indexed`);
+    }
+    return 0;
+  }
+
   if (cmd === "search") {
-    const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1]!.startsWith("--") && rest[i - 1] !== "--json"));
+    const VALUE_FLAGS = new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related"]);
+    const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1]!)));
     const query = positional.join(" ").trim();
     if (!query) {
-      console.error("usage: arcadedb-skills search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]");
+      console.error("usage: arcadedb-skills search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
       return 1;
     }
-    if (embedStatus() !== "ready") {
+    const mode = (flag(rest, "mode") ?? "hybrid") as SearchMode;
+    const embedReady = embedStatus() === "ready";
+    if (mode === "vector" && !embedReady) {
       console.error(`embedding runtime not ready (${embedStatus()}); run: arcadedb-skills embed install`);
       return 2;
     }
@@ -81,9 +100,38 @@ async function main(): Promise<number> {
     const cfg = resolveConfig();
     const client = new Client(toClientEnv(cfg));
     const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
-    const embed = await loadEmbedder();
-    const hits = await semanticSearch(client, db, embed, query, { limit: Number.isFinite(limit) ? limit : 10, types, repo: flag(rest, "repo") });
+    const embed = embedReady && mode !== "text" ? await loadEmbedder() : null;
+    const num = (name: string, dflt: number): number => { const v = Number(flag(rest, name)); return Number.isFinite(v) ? v : dflt; };
+    const hits = await hybridSearch(client, db, embed, query, {
+      limit: Number.isFinite(limit) ? limit : 10, types, repo: flag(rest, "repo"), mode,
+      context: num("context", 1), related: num("related", 3),
+    });
+    if (!embedReady && mode === "hybrid") console.error("note: embedding runtime not ready, text-only results (arcadedb-skills embed install)");
     console.log(rest.includes("--json") ? JSON.stringify(hits, null, 2) : formatHits(hits));
+    return 0;
+  }
+
+  if (cmd === "refs") {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    if (rest[0] === "backfill") {
+      const r = await backfillRefs(client, db);
+      console.log(`linked ${r.refs} refs on ${r.turns} turns`);
+      return 0;
+    }
+    const value = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1] === "--limit")).join(" ").trim().toLowerCase();
+    if (!value) { console.error("usage: arcadedb-skills refs backfill | <path|symbol|commit|ticket> [--limit <n>] [--json]"); return 1; }
+    type RefRow = { kind: string; value: string; id: string; repo: string | null; at: string; role: string; text: string };
+    const lim = Number(flag(rest, "limit") ?? 20);
+    const rows = await client.query<RefRow>(db, "cypher",
+      `MATCH (r:Ref)<-[:MENTIONS]-(t:Turn) WHERE r.valueLc = '${value.replace(/'/g, "\\'")}'
+       RETURN r.kind AS kind, r.value AS value, t.id AS id, t.repo AS repo, t.ts AS at, t.role AS role, t.text AS text
+       ORDER BY t.ts DESC LIMIT ${Number.isFinite(lim) ? lim : 20}`);
+    if (rest.includes("--json")) { console.log(JSON.stringify(rows, null, 2)); return 0; }
+    if (rows.length === 0) { console.log(`no turns mention "${value}"`); return 0; }
+    console.log(`${rows.length} turn(s) mention ${rows[0]!.kind} ${rows[0]!.value}:`);
+    for (const r of rows) console.log(`- ${r.repo ?? "?"} ${String(r.at).slice(0, 16)} ${r.role}: ${(r.text ?? "").replace(/\n/g, " ").slice(0, 160)}`);
     return 0;
   }
 

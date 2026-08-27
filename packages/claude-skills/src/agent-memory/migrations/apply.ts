@@ -1,6 +1,7 @@
 import type { Client } from "../client.js";
 import { allSchemas, type SchemaDomain } from "../schemas/all.js";
 import { renderSchema } from "./render.js";
+import { backfillFullText } from "./fulltext.js";
 
 export async function applySchemas(
   client: Client,
@@ -14,7 +15,14 @@ export async function applySchemas(
     if (!schema) throw new Error(`Unknown schema domain: ${domain}`);
     const stmts = renderSchema(schema);
     for (const stmt of stmts) {
-      await client.execute(database, "sql", stmt);
+      const result = await client.execute<{ created?: boolean; totalIndexed?: number; name?: string }>(database, "sql", stmt);
+      const created = Array.isArray(result) ? result[0] : undefined;
+      // ArcadeDB builds a FULL_TEXT index over existing rows as a no-op (and REBUILD INDEX crashes on it):
+      // only rows written after creation are searchable. Rewrite the old rows once so they get indexed.
+      if (stmt.endsWith("FULL_TEXT") && created?.created && (created.totalIndexed ?? 0) > 0) {
+        const m = /ON (\w+)\((\w+)\) FULL_TEXT$/.exec(stmt);
+        if (m) await backfillFullText(client, database, m[1]!, m[2]!);
+      }
     }
   }
 }

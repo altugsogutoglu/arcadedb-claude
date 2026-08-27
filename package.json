@@ -1,6 +1,6 @@
 {
   "name": "arcadedb-claude",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "private": true,
   "description": "ArcadeDB-powered graph intelligence suite for Claude Code: agent memory, code indexing, Obsidian sync, and a Claude Code plugin.",
   "license": "MIT",

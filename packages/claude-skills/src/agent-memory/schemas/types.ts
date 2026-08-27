@@ -11,6 +11,8 @@ export interface PropertyDef {
   primaryKey?: boolean;
   notNull?: boolean;
   vectorIndex?: VectorIndexDef;
+  /** Lucene FULL_TEXT index, queried with SEARCH_INDEX(). */
+  fullTextIndex?: boolean;
 }
 
 export interface VertexTypeDef {

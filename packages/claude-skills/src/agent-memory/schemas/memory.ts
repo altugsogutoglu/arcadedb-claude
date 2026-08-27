@@ -32,7 +32,7 @@ export const memorySchema: Schema = {
         { name: "sessionId", type: "STRING", notNull: true },
         { name: "idx", type: "INTEGER", notNull: true },
         { name: "role", type: "STRING", notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "ts", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding,
@@ -42,8 +42,8 @@ export const memorySchema: Schema = {
       name: "Decision",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "summary", type: "STRING", notNull: true },
-        { name: "rationale", type: "STRING" },
+        { name: "summary", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "rationale", type: "STRING", fullTextIndex: true },
         { name: "decidedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding,
@@ -53,8 +53,8 @@ export const memorySchema: Schema = {
       name: "Insight",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "topic", type: "STRING", notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "topic", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "createdAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding,
@@ -64,7 +64,7 @@ export const memorySchema: Schema = {
       name: "Question",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "askedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding,
@@ -74,14 +74,26 @@ export const memorySchema: Schema = {
       name: "Answer",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "answeredAt", type: "DATETIME", notNull: true },
         { name: "confidence", type: "FLOAT" },
         embedding,
       ],
     },
+    {
+      // Something a Turn refers to by name: a file path, symbol, commit, ticket or URL.
+      // Global on purpose (no repo): the same path or class name links turns across repos.
+      name: "Ref",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "kind", type: "STRING", notNull: true },
+        { name: "value", type: "STRING", notNull: true },
+        { name: "valueLc", type: "STRING", notNull: true },
+      ],
+    },
   ],
   edges: [
+    { name: "MENTIONS" },
     { name: "ABOUT" },
     { name: "DURING" },
     { name: "FOLLOWS" },

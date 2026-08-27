@@ -143,7 +143,7 @@ var memorySchema = {
         { name: "sessionId", type: "STRING", notNull: true },
         { name: "idx", type: "INTEGER", notNull: true },
         { name: "role", type: "STRING", notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "ts", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding
@@ -153,8 +153,8 @@ var memorySchema = {
       name: "Decision",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "summary", type: "STRING", notNull: true },
-        { name: "rationale", type: "STRING" },
+        { name: "summary", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "rationale", type: "STRING", fullTextIndex: true },
         { name: "decidedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding
@@ -164,8 +164,8 @@ var memorySchema = {
       name: "Insight",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "topic", type: "STRING", notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "topic", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "createdAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding
@@ -175,7 +175,7 @@ var memorySchema = {
       name: "Question",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "askedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding
@@ -185,14 +185,26 @@ var memorySchema = {
       name: "Answer",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "answeredAt", type: "DATETIME", notNull: true },
         { name: "confidence", type: "FLOAT" },
         embedding
       ]
+    },
+    {
+      // Something a Turn refers to by name: a file path, symbol, commit, ticket or URL.
+      // Global on purpose (no repo): the same path or class name links turns across repos.
+      name: "Ref",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "kind", type: "STRING", notNull: true },
+        { name: "value", type: "STRING", notNull: true },
+        { name: "valueLc", type: "STRING", notNull: true }
+      ]
     }
   ],
   edges: [
+    { name: "MENTIONS" },
     { name: "ABOUT" },
     { name: "DURING" },
     { name: "FOLLOWS" },
@@ -340,6 +352,34 @@ var allSchemas = {
   business: businessSchema,
   notes: notesSchema
 };
+
+// src/agent-memory/migrations/fulltext.ts
+var BATCH = 200;
+async function backfillFullText(client, db, type, prop) {
+  let done = 0;
+  let skip = 0;
+  for (; ; ) {
+    const rows = await client.query(
+      db,
+      "sql",
+      `SELECT @rid AS rid, ${prop} AS v FROM ${type} WHERE ${prop} IS NOT NULL SKIP ${skip} LIMIT ${BATCH}`
+    );
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      if (typeof r.v !== "string") continue;
+      const lit = sqlStr(r.v);
+      await client.execute(db, "sql", `UPDATE ${r.rid} SET ${prop} = ${lit} + ' '`);
+      await client.execute(db, "sql", `UPDATE ${r.rid} SET ${prop} = ${lit}`);
+      done += 1;
+    }
+    skip += rows.length;
+    if (rows.length < BATCH) break;
+  }
+  return done;
+}
+function sqlStr(s) {
+  return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
 
 // src/agent-memory/extractor/cypher-builder.ts
 function quote(v) {
@@ -1244,7 +1284,7 @@ function acquireLock(path) {
 }
 
 // src/embed-runner.ts
-var BATCH = 64;
+var BATCH2 = 64;
 var TEXT_EXPR = {
   Turn: "text",
   Decision: "ifnull(summary, '') + ' ' + ifnull(rationale, '')",
@@ -1264,7 +1304,7 @@ async function embedPending(client, db, embed, types = EMBEDDED_TYPES) {
       const rows = await client.query(
         db,
         "sql",
-        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL LIMIT ${BATCH}`
+        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL LIMIT ${BATCH2}`
       );
       if (rows.length === 0) break;
       const vectors = await embed(rows.map((r) => r.body ?? ""));
@@ -1277,7 +1317,7 @@ async function embedPending(client, db, embed, types = EMBEDDED_TYPES) {
         );
       }
       total += rows.length;
-      if (rows.length < BATCH) break;
+      if (rows.length < BATCH2) break;
     }
   }
   return total;
@@ -1330,37 +1370,235 @@ var AT_EXPR = {
   Question: "askedAt",
   Answer: "answeredAt"
 };
-async function semanticSearch(client, db, embed, query, opts = {}) {
+var TEXT_INDEXED = {
+  Turn: ["text"],
+  Decision: ["summary", "rationale"],
+  Insight: ["topic", "text"],
+  Question: ["text"],
+  Answer: ["text"]
+};
+var RRF_K = 60;
+var CANDIDATE_FACTOR = 3;
+function fuseRanks(lists, k = RRF_K) {
+  const acc = /* @__PURE__ */ new Map();
+  for (const [name, keys] of Object.entries(lists)) {
+    keys.forEach((key, rank) => {
+      const cur = acc.get(key) ?? { score: 0, via: [] };
+      cur.score += 1 / (k + rank + 1);
+      if (!cur.via.includes(name)) cur.via.push(name);
+      acc.set(key, cur);
+    });
+  }
+  return [...acc.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.score - a.score);
+}
+function luceneQuery(query) {
+  const tokens = query.split(/\s+/).map((t) => t.replace(/["\\]/g, "").replace(/^[^\w./:#-]+|[^\w./:#-]+$/g, "")).filter((t) => t.length > 1);
+  return tokens.map((t) => `"${t}"`).join(" ");
+}
+function queryTokens(query) {
+  return query.split(/\s+/).map((t) => t.replace(/^[^\w./:#-]+|[^\w./:#-]+$/g, "").toLowerCase()).filter((t) => t.length > 2);
+}
+function sqlStr2(s) {
+  return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+async function hybridSearch(client, db, embed, query, opts = {}) {
   const limit = opts.limit ?? 10;
   const types = opts.types ?? EMBEDDED_TYPES;
-  const [vec] = await embed([query]);
-  const literal2 = `[${vec.map((v) => v.toFixed(6)).join(",")}]`;
-  const hits = [];
+  const mode = opts.mode ?? (embed ? "hybrid" : "text");
+  const useVector = mode !== "text" && embed !== null;
+  const useText = mode !== "vector";
+  const candidates = limit * CANDIDATE_FACTOR;
+  const repoClause = opts.repo ? ` AND repo = ${sqlStr2(opts.repo)}` : "";
+  let vecLiteral = null;
+  if (useVector) {
+    const [vec] = await embed([query]);
+    vecLiteral = `[${vec.map((v) => v.toFixed(6)).join(",")}]`;
+  }
+  const lucene = useText ? luceneQuery(query) : "";
+  const tokens = queryTokens(query);
+  const lists = {};
+  const typeOf = /* @__PURE__ */ new Map();
+  const remember = (type, rids) => {
+    for (const r of rids) typeOf.set(r, type);
+    return rids;
+  };
   for (const type of types) {
-    const repoClause = opts.repo ? ` AND repo = '${opts.repo.replace(/'/g, "\\'")}'` : "";
+    if (vecLiteral) {
+      const rows = await client.query(
+        db,
+        "sql",
+        `SELECT @rid AS rid, vectorCosineSimilarity(embedding, ${vecLiteral}) AS score
+         FROM ${type} WHERE embedding IS NOT NULL${repoClause} ORDER BY score DESC LIMIT ${candidates}`
+      );
+      (lists["vector"] ??= []).push(...remember(type, rows.map((r) => r.rid)));
+    }
+    if (lucene) {
+      for (const prop of TEXT_INDEXED[type]) {
+        const rows = await client.query(
+          db,
+          "sql",
+          `SELECT @rid AS rid, $score AS score FROM ${type}
+           WHERE SEARCH_INDEX(${sqlStr2(`${type}[${prop}]`)}, ${sqlStr2(lucene)}) = true${repoClause}
+           ORDER BY score DESC LIMIT ${candidates}`
+        ).catch(() => []);
+        (lists["text"] ??= []).push(...remember(type, rows.map((r) => r.rid)));
+      }
+    }
+  }
+  if (useText && tokens.length > 0 && types.includes("Turn")) {
     const rows = await client.query(
       db,
       "sql",
-      `SELECT @rid AS rid, ${TEXT_EXPR[type]} AS body, repo, ${AT_EXPR[type]} AS at, ${type === "Turn" ? "sessionId" : "null"} AS sessionId,
-              vectorCosineSimilarity(embedding, ${literal2}) AS score
-       FROM ${type} WHERE embedding IS NOT NULL${repoClause}
-       ORDER BY score DESC LIMIT ${limit}`
+      `SELECT @rid AS rid FROM (SELECT expand(in('MENTIONS')) FROM Ref WHERE valueLc IN [${tokens.map(sqlStr2).join(",")}])
+       WHERE @type = 'Turn'${repoClause} LIMIT ${candidates}`
+    ).catch(() => []);
+    (lists["ref"] ??= []).push(...remember("Turn", rows.map((r) => r.rid)));
+  }
+  const fused = fuseRanks(lists).slice(0, limit);
+  const hits = await hydrate(client, db, fused.map((f) => ({ rid: f.key, type: typeOf.get(f.key), score: f.score, via: f.via })));
+  const ctx = opts.context ?? 1;
+  const rel = opts.related ?? 3;
+  for (const h of hits) {
+    if (h.type !== "Turn") continue;
+    if (ctx > 0) h.context = await turnContext(client, db, h, ctx);
+    if (rel > 0) h.related = await relatedTurns(client, db, h.rid, rel);
+  }
+  return hits;
+}
+async function hydrate(client, db, items) {
+  const byType = /* @__PURE__ */ new Map();
+  for (const it of items) (byType.get(it.type) ?? byType.set(it.type, []).get(it.type)).push(it);
+  const out = /* @__PURE__ */ new Map();
+  for (const [type, group] of byType) {
+    const rows = await client.query(
+      db,
+      "sql",
+      `SELECT @rid AS rid, ${TEXT_EXPR[type]} AS body, repo, ${AT_EXPR[type]} AS at, ${type === "Turn" ? "sessionId, idx" : "null AS sessionId, null AS idx"}
+       FROM ${type} WHERE @rid IN [${group.map((g) => g.rid).join(",")}]`
     );
     for (const r of rows) {
-      hits.push({ type, score: r.score, text: r.body ?? "", repo: r.repo ?? null, at: r.at ?? null, sessionId: r.sessionId ?? null, rid: r.rid });
+      const it = group.find((g) => g.rid === r.rid);
+      out.set(r.rid, { type, score: it.score, via: it.via, text: r.body ?? "", repo: r.repo ?? null, at: r.at ?? null, sessionId: r.sessionId ?? null, rid: r.rid, ...r.idx != null ? { idx: r.idx } : {} });
     }
   }
-  hits.sort((a, b) => b.score - a.score);
-  return hits.slice(0, limit);
+  return items.map((i) => out.get(i.rid)).filter((h) => !!h);
+}
+async function turnContext(client, db, hit, n) {
+  const idx = hit.idx;
+  if (!hit.sessionId || idx == null) return { before: [], after: [] };
+  const sel = "SELECT id, role, repo, ts AS at, text FROM Turn WHERE sessionId = " + sqlStr2(hit.sessionId);
+  const before = await client.query(db, "sql", `${sel} AND idx < ${idx} ORDER BY idx DESC LIMIT ${n}`);
+  const after = await client.query(db, "sql", `${sel} AND idx > ${idx} ORDER BY idx ASC LIMIT ${n}`);
+  return { before: before.reverse(), after };
+}
+async function relatedTurns(client, db, rid, n) {
+  const rows = await client.query(
+    db,
+    "sql",
+    `SELECT id, role, repo, ts AS at, text, sessionId FROM (
+       SELECT expand(out('MENTIONS').in('MENTIONS')) FROM ${rid}
+     ) WHERE @rid <> ${rid} ORDER BY ts DESC LIMIT ${n * 10}`
+  ).catch(() => []);
+  const own = await client.query(db, "sql", `SELECT sessionId FROM ${rid}`).catch(() => []);
+  const ownSession = own[0]?.sessionId;
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const r of rows) {
+    if (r.sessionId === ownSession || seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push({ id: r.id, role: r.role, repo: r.repo, at: r.at, text: r.text });
+    if (out.length >= n) break;
+  }
+  return out;
 }
 function formatHits(hits, maxChars = 400) {
-  if (hits.length === 0) return "no matches (nothing embedded yet, or embeddings still running)";
+  if (hits.length === 0) return "no matches (nothing captured or indexed yet)";
+  const clip = (t, n) => (t.length > n ? t.slice(0, n) + "..." : t).replace(/\n/g, " ");
   return hits.map((h, i) => {
     const text = h.text.length > maxChars ? h.text.slice(0, maxChars) + "..." : h.text;
-    const meta = [h.type, h.repo, h.at ? h.at.slice(0, 16) : null].filter(Boolean).join(" | ");
-    return `${i + 1}. [${h.score.toFixed(3)}] ${meta}
-   ${text.replace(/\n/g, "\n   ")}`;
+    const meta = [h.type, h.repo, h.at ? h.at.slice(0, 16) : null, h.via.join("+")].filter(Boolean).join(" | ");
+    const lines = [`${i + 1}. [${h.score.toFixed(3)}] ${meta}`, `   ${text.replace(/\n/g, "\n   ")}`];
+    for (const b of h.context?.before ?? []) lines.push(`   \u2191 ${b.role ?? "?"}: ${clip(b.text, 120)}`);
+    for (const a of h.context?.after ?? []) lines.push(`   \u2193 ${a.role ?? "?"}: ${clip(a.text, 120)}`);
+    for (const r of h.related ?? []) lines.push(`   ~ ${r.repo ?? "?"} ${r.at ? r.at.slice(0, 10) : ""}: ${clip(r.text, 120)}`);
+    return lines.join("\n");
   }).join("\n");
+}
+
+// src/refs.ts
+var MAX_REFS_PER_TURN = 30;
+var URL_RE = /https?:\/\/[^\s)>\]"'`]+/g;
+var PATH_RE = /(?:^|[\s(`'"[])((?:\.{0,2}\/)?(?:[\w.-]+\/)+[\w.-]+\.[a-z0-9]{1,6})(?=[\s)`'":,;\]]|$)/gi;
+var SHA_RE = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/g;
+var TICKET_RE = /\b([A-Z][A-Z0-9]{1,9})[-:](\d{1,6})\b/g;
+var SYMBOL_RE = /\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b/g;
+var TICKET_PREFIX_NOISE = /* @__PURE__ */ new Set(["UTF", "ISO", "SHA", "MD", "HTTP", "TLS", "SSL", "AES", "RSA", "IPV", "ES", "PHP", "H", "P", "V"]);
+function extractRefs(text) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  const push = (kind, raw) => {
+    const value = raw.trim();
+    if (!value) return;
+    const key = `${kind}:${value.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ kind, value });
+  };
+  for (const m of text.matchAll(URL_RE)) push("url", m[0].replace(/[.,;:]+$/, ""));
+  const noUrls = text.replace(URL_RE, " ");
+  for (const m of noUrls.matchAll(PATH_RE)) push("path", m[1].replace(/^\.\//, ""));
+  for (const m of noUrls.matchAll(SHA_RE)) push("commit", m[0].toLowerCase());
+  for (const m of noUrls.matchAll(TICKET_RE)) {
+    if (TICKET_PREFIX_NOISE.has(m[1])) continue;
+    push("ticket", `${m[1]}:${m[2]}`);
+  }
+  for (const m of noUrls.matchAll(SYMBOL_RE)) {
+    if (m[0].length < 6) continue;
+    push("symbol", m[0]);
+  }
+  return out.slice(0, MAX_REFS_PER_TURN);
+}
+function refId(ref) {
+  return `${ref.kind}:${ref.value.toLowerCase()}`;
+}
+
+// src/turn-capture.ts
+async function writeRefs(client, db, turnId, refs) {
+  for (const r of refs) {
+    const id = refId(r);
+    await client.execute(
+      db,
+      "cypher",
+      `MERGE (r:Ref {id: ${cypherStr(id)}})
+       SET r.kind = ${cypherStr(r.kind)}, r.value = ${cypherStr(r.value)}, r.valueLc = ${cypherStr(r.value.toLowerCase())}`
+    );
+    await client.execute(
+      db,
+      "cypher",
+      `MATCH (t:Turn {id: ${cypherStr(turnId)}}), (r:Ref {id: ${cypherStr(id)}})
+       WHERE NOT (t)-[:MENTIONS]->(r) CREATE (t)-[:MENTIONS]->(r)`
+    );
+  }
+  return refs.length;
+}
+async function backfillRefs(client, db) {
+  let turns = 0;
+  let refs = 0;
+  const rows = await client.query(
+    db,
+    "cypher",
+    `MATCH (t:Turn) WHERE NOT (t)-[:MENTIONS]->() RETURN t.id AS id, t.text AS text`
+  );
+  for (const row of rows) {
+    const found = extractRefs(row.text ?? "");
+    if (found.length === 0) continue;
+    refs += await writeRefs(client, db, row.id, found);
+    turns += 1;
+  }
+  return { turns, refs };
+}
+function cypherStr(s) {
+  return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
 // bin/arcadedb-skills.ts
@@ -1375,7 +1613,9 @@ function usage() {
   console.error("  extractor-prompt                           print the extractor system prompt");
   console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>] [--repo <name>]");
   console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
-  console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]   semantic search over captured memory");
+  console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
+  console.error("  search reindex                             re-index existing rows for full-text search (one-off after upgrade)");
+  console.error("  refs backfill | <value>                    link :Ref nodes for old turns | list turns naming a path/symbol/commit/ticket");
   console.error("  embed install | status | run              manage the local embedding runtime");
   console.error("  extract-replay <sessionDbId|audit.jsonl> [--repo <name>]  re-write a session's audited triples into the graph (repairs nodes written without text)");
 }
@@ -1401,14 +1641,28 @@ async function main2() {
     console.error(`no state file for session ${session}`);
     return 1;
   }
+  if (cmd === "search" && rest[0] === "reindex") {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const pairs = [["Turn", "text"], ["Decision", "summary"], ["Decision", "rationale"], ["Insight", "topic"], ["Insight", "text"], ["Question", "text"], ["Answer", "text"]];
+    for (const [type, prop] of pairs) {
+      const n = await backfillFullText(client, db, type, prop);
+      console.log(`${type}.${prop}: ${n} rows re-indexed`);
+    }
+    return 0;
+  }
   if (cmd === "search") {
-    const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1].startsWith("--") && rest[i - 1] !== "--json"));
+    const VALUE_FLAGS = /* @__PURE__ */ new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related"]);
+    const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
     const query = positional.join(" ").trim();
     if (!query) {
-      console.error("usage: arcadedb-skills search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--json]");
+      console.error("usage: arcadedb-skills search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
       return 1;
     }
-    if (embedStatus() !== "ready") {
+    const mode = flag2(rest, "mode") ?? "hybrid";
+    const embedReady = embedStatus() === "ready";
+    if (mode === "vector" && !embedReady) {
       console.error(`embedding runtime not ready (${embedStatus()}); run: arcadedb-skills embed install`);
       return 2;
     }
@@ -1418,9 +1672,55 @@ async function main2() {
     const cfg = resolveConfig();
     const client = new Client(toClientEnv(cfg));
     const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
-    const embed = await loadEmbedder();
-    const hits = await semanticSearch(client, db, embed, query, { limit: Number.isFinite(limit) ? limit : 10, types, repo: flag2(rest, "repo") });
+    const embed = embedReady && mode !== "text" ? await loadEmbedder() : null;
+    const num = (name, dflt) => {
+      const v = Number(flag2(rest, name));
+      return Number.isFinite(v) ? v : dflt;
+    };
+    const hits = await hybridSearch(client, db, embed, query, {
+      limit: Number.isFinite(limit) ? limit : 10,
+      types,
+      repo: flag2(rest, "repo"),
+      mode,
+      context: num("context", 1),
+      related: num("related", 3)
+    });
+    if (!embedReady && mode === "hybrid") console.error("note: embedding runtime not ready, text-only results (arcadedb-skills embed install)");
     console.log(rest.includes("--json") ? JSON.stringify(hits, null, 2) : formatHits(hits));
+    return 0;
+  }
+  if (cmd === "refs") {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    if (rest[0] === "backfill") {
+      const r = await backfillRefs(client, db);
+      console.log(`linked ${r.refs} refs on ${r.turns} turns`);
+      return 0;
+    }
+    const value = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1] === "--limit")).join(" ").trim().toLowerCase();
+    if (!value) {
+      console.error("usage: arcadedb-skills refs backfill | <path|symbol|commit|ticket> [--limit <n>] [--json]");
+      return 1;
+    }
+    const lim = Number(flag2(rest, "limit") ?? 20);
+    const rows = await client.query(
+      db,
+      "cypher",
+      `MATCH (r:Ref)<-[:MENTIONS]-(t:Turn) WHERE r.valueLc = '${value.replace(/'/g, "\\'")}'
+       RETURN r.kind AS kind, r.value AS value, t.id AS id, t.repo AS repo, t.ts AS at, t.role AS role, t.text AS text
+       ORDER BY t.ts DESC LIMIT ${Number.isFinite(lim) ? lim : 20}`
+    );
+    if (rest.includes("--json")) {
+      console.log(JSON.stringify(rows, null, 2));
+      return 0;
+    }
+    if (rows.length === 0) {
+      console.log(`no turns mention "${value}"`);
+      return 0;
+    }
+    console.log(`${rows.length} turn(s) mention ${rows[0].kind} ${rows[0].value}:`);
+    for (const r of rows) console.log(`- ${r.repo ?? "?"} ${String(r.at).slice(0, 16)} ${r.role}: ${(r.text ?? "").replace(/\n/g, " ").slice(0, 160)}`);
     return 0;
   }
   if (cmd === "embed") {

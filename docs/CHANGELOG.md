@@ -4,6 +4,17 @@ Keep a Changelog style. Newest on top. Since 0.8.0 there is one package: package
 
 ## [Unreleased]
 
+## arcadedb-claude-skills 0.10.0 - 2026-08-27
+
+### Added
+- Hybrid search. `search` now fuses three retrievers with reciprocal rank fusion: local vector similarity, ArcadeDB FULL_TEXT (Lucene) over `Turn.text` and the note fields, and exact `:Ref` lookup. Exact identifiers (`ef71e31d`, `HeisterkampClient`, `config/heisterkamp.php`, `BACKLOG:69`) now rank first; a missing embedding runtime degrades to text search instead of failing. `--mode hybrid|vector|text`.
+- Graph expansion. Turn hits carry `context` (previous/next turn in the session) and `related` (turns from other sessions and repos naming the same file, symbol, commit or ticket). `--context <n>`, `--related <n>`, both in `--json`.
+- Ref linking without a model. Every captured Turn is scanned for file paths, PascalCase symbols, commit SHAs, ticket ids and URLs; they become global `:Ref` nodes with `Turn-[:MENTIONS]->Ref` edges, so the same class name links work across repos. `arcadedb-skills refs <value>` lists the turns naming it; `refs backfill` links turns captured before 0.10.0.
+- `search reindex`: one-off full-text re-index of existing rows.
+
+### Fixed
+- ArcadeDB builds a FULL_TEXT index over existing rows as a no-op (and `REBUILD INDEX` crashes on it). `applySchemas` now rewrites existing rows once when it creates such an index, so old turns are searchable.
+
 ## arcadedb-claude-skills 0.9.1 - 2026-08-27
 
 ### Fixed

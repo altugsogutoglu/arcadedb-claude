@@ -296,6 +296,43 @@ function cleanText(text) {
   return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, "").replace(/<command-(?:name|message|args)>[\s\S]*?<\/command-(?:name|message|args)>/g, "").trim();
 }
 
+// src/refs.ts
+var MAX_REFS_PER_TURN = 30;
+var URL_RE = /https?:\/\/[^\s)>\]"'`]+/g;
+var PATH_RE = /(?:^|[\s(`'"[])((?:\.{0,2}\/)?(?:[\w.-]+\/)+[\w.-]+\.[a-z0-9]{1,6})(?=[\s)`'":,;\]]|$)/gi;
+var SHA_RE = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/g;
+var TICKET_RE = /\b([A-Z][A-Z0-9]{1,9})[-:](\d{1,6})\b/g;
+var SYMBOL_RE = /\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b/g;
+var TICKET_PREFIX_NOISE = /* @__PURE__ */ new Set(["UTF", "ISO", "SHA", "MD", "HTTP", "TLS", "SSL", "AES", "RSA", "IPV", "ES", "PHP", "H", "P", "V"]);
+function extractRefs(text) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  const push = (kind, raw) => {
+    const value = raw.trim();
+    if (!value) return;
+    const key = `${kind}:${value.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ kind, value });
+  };
+  for (const m of text.matchAll(URL_RE)) push("url", m[0].replace(/[.,;:]+$/, ""));
+  const noUrls = text.replace(URL_RE, " ");
+  for (const m of noUrls.matchAll(PATH_RE)) push("path", m[1].replace(/^\.\//, ""));
+  for (const m of noUrls.matchAll(SHA_RE)) push("commit", m[0].toLowerCase());
+  for (const m of noUrls.matchAll(TICKET_RE)) {
+    if (TICKET_PREFIX_NOISE.has(m[1])) continue;
+    push("ticket", `${m[1]}:${m[2]}`);
+  }
+  for (const m of noUrls.matchAll(SYMBOL_RE)) {
+    if (m[0].length < 6) continue;
+    push("symbol", m[0]);
+  }
+  return out.slice(0, MAX_REFS_PER_TURN);
+}
+function refId(ref) {
+  return `${ref.kind}:${ref.value.toLowerCase()}`;
+}
+
 // src/turn-capture.ts
 async function writeTurns(client, db, args) {
   const written = [];
@@ -315,9 +352,28 @@ async function writeTurns(client, db, args) {
       `MATCH (t:Turn {id: ${cypherStr(id)}}), (s:Session {id: ${cypherStr(args.sessionDbId)}})
        WHERE NOT (t)-[:DURING]->(s) CREATE (t)-[:DURING]->(s)`
     );
+    await writeRefs(client, db, id, extractRefs(t.text));
     written.push({ id, line: t.line });
   }
   return written;
+}
+async function writeRefs(client, db, turnId, refs) {
+  for (const r of refs) {
+    const id = refId(r);
+    await client.execute(
+      db,
+      "cypher",
+      `MERGE (r:Ref {id: ${cypherStr(id)}})
+       SET r.kind = ${cypherStr(r.kind)}, r.value = ${cypherStr(r.value)}, r.valueLc = ${cypherStr(r.value.toLowerCase())}`
+    );
+    await client.execute(
+      db,
+      "cypher",
+      `MATCH (t:Turn {id: ${cypherStr(turnId)}}), (r:Ref {id: ${cypherStr(id)}})
+       WHERE NOT (t)-[:MENTIONS]->(r) CREATE (t)-[:MENTIONS]->(r)`
+    );
+  }
+  return refs.length;
 }
 function cypherStr(s) {
   return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;

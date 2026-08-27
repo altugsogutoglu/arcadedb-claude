@@ -32,5 +32,8 @@ function renderProperty(typeName: string, p: PropertyDef): string[] {
     const meta = JSON.stringify({ dimensions: p.vectorIndex.dimensions, similarity: p.vectorIndex.similarity });
     stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) LSM_VECTOR METADATA ${meta}`);
   }
+  if (p.fullTextIndex) {
+    stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) FULL_TEXT`);
+  }
   return stmts;
 }

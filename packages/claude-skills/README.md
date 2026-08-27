@@ -65,16 +65,28 @@ Triggers on phrases like "how does X work", "what calls Y", "decision about Z". 
 
 Every prompt you type and every answer Claude gives is written to the memory DB as a `:Turn` node (`DURING` the `:Session`) by the `Stop` hook. Pure code: no model call, no token cost, nothing summarised away. Tool calls, tool output and thinking are not stored; an answer interleaved with tool calls is stored as one Turn.
 
-### Semantic search (on by default, local)
+### Search (hybrid, local, on by default)
 
-Turns and notes get a 384-dim embedding from `all-MiniLM-L6-v2` running locally through transformers.js. The first SessionStart installs the runtime (~260 MB) into `~/.config/arcadedb/embed/` in the background; from the next session on a detached `embed-runner` fills embeddings after each turn (3 ms per turn once the model is warm). ArcadeDB keeps an `LSM_VECTOR` cosine index on `embedding`.
+Three retrievers, fused with reciprocal rank fusion, no model call at query time except the local 384-dim embedding of your question:
+
+- **vector**: `all-MiniLM-L6-v2` through transformers.js (runtime auto-installed into `~/.config/arcadedb/embed/`, ~260 MB once; a detached `embed-runner` fills embeddings after each turn). Finds paraphrases.
+- **text**: ArcadeDB FULL_TEXT (Lucene) index on `Turn.text` and the note fields. Finds exact identifiers: commit SHAs, class names, file paths, ticket ids.
+- **ref**: every captured Turn is scanned (regex, no LLM) for paths, PascalCase symbols, commits, tickets and URLs, stored as global `:Ref` nodes with `Turn-[:MENTIONS]->Ref` edges. A query token equal to a ref value pulls in every turn naming it, across repos.
+
+Turn hits are expanded: `↑`/`↓` the turn before and after in the same session, `~` turns from other sessions and repos that share a ref with the hit.
 
 ```bash
-arcadedb-skills search "rental cost logic"            # top 10 across Turn/Decision/Insight/Q&A
-arcadedb-skills search "why one package" --types Turn --repo arcadedb-claude --limit 5 --json
-arcadedb-skills embed status | install | run          # runtime state, install now, embed pending nodes now
-arcadedb-skills extract-replay <sessionDbId> [--repo X] # re-write an audited extractor batch (repair / re-embed / backfill repo)
+arcadedb-skills search "rental cost logic"                       # top 10 across Turn/Decision/Insight/Q&A
+arcadedb-skills search "HeisterkampClient guard" --repo transprt.net --limit 5
+arcadedb-skills search "config/heisterkamp.php" --mode text --context 2 --related 5 --json
+arcadedb-skills refs HeisterkampClient                            # every turn naming that symbol, any repo
+arcadedb-skills refs backfill                                     # link refs for turns captured before 0.10.0
+arcadedb-skills search reindex                                    # one-off full-text re-index after upgrade
+arcadedb-skills embed status | install | run                     # runtime state, install now, embed pending nodes now
+arcadedb-skills extract-replay <sessionDbId> [--repo X]          # re-write an audited extractor batch (repair / re-embed / backfill repo)
 ```
+
+Without the embedding runtime, `search` runs text + ref only and says so on stderr.
 
 `/graph-query` uses this for fuzzy questions ("what did we say about X").
 

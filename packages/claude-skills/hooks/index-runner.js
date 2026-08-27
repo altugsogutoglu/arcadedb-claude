@@ -187,7 +187,7 @@ var memorySchema = {
         { name: "sessionId", type: "STRING", notNull: true },
         { name: "idx", type: "INTEGER", notNull: true },
         { name: "role", type: "STRING", notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "ts", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding
@@ -197,8 +197,8 @@ var memorySchema = {
       name: "Decision",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "summary", type: "STRING", notNull: true },
-        { name: "rationale", type: "STRING" },
+        { name: "summary", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "rationale", type: "STRING", fullTextIndex: true },
         { name: "decidedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding
@@ -208,8 +208,8 @@ var memorySchema = {
       name: "Insight",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "topic", type: "STRING", notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "topic", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "createdAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding
@@ -219,7 +219,7 @@ var memorySchema = {
       name: "Question",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "askedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
         embedding
@@ -229,14 +229,26 @@ var memorySchema = {
       name: "Answer",
       properties: [
         { name: "id", type: "STRING", primaryKey: true, notNull: true },
-        { name: "text", type: "STRING", notNull: true },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
         { name: "answeredAt", type: "DATETIME", notNull: true },
         { name: "confidence", type: "FLOAT" },
         embedding
       ]
+    },
+    {
+      // Something a Turn refers to by name: a file path, symbol, commit, ticket or URL.
+      // Global on purpose (no repo): the same path or class name links turns across repos.
+      name: "Ref",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "kind", type: "STRING", notNull: true },
+        { name: "value", type: "STRING", notNull: true },
+        { name: "valueLc", type: "STRING", notNull: true }
+      ]
     }
   ],
   edges: [
+    { name: "MENTIONS" },
     { name: "ABOUT" },
     { name: "DURING" },
     { name: "FOLLOWS" },
@@ -415,7 +427,38 @@ function renderProperty(typeName, p) {
     const meta = JSON.stringify({ dimensions: p.vectorIndex.dimensions, similarity: p.vectorIndex.similarity });
     stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) LSM_VECTOR METADATA ${meta}`);
   }
+  if (p.fullTextIndex) {
+    stmts.push(`CREATE INDEX IF NOT EXISTS ON ${typeName}(${p.name}) FULL_TEXT`);
+  }
   return stmts;
+}
+
+// src/agent-memory/migrations/fulltext.ts
+var BATCH = 200;
+async function backfillFullText(client, db, type, prop) {
+  let done = 0;
+  let skip = 0;
+  for (; ; ) {
+    const rows = await client.query(
+      db,
+      "sql",
+      `SELECT @rid AS rid, ${prop} AS v FROM ${type} WHERE ${prop} IS NOT NULL SKIP ${skip} LIMIT ${BATCH}`
+    );
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      if (typeof r.v !== "string") continue;
+      const lit = sqlStr(r.v);
+      await client.execute(db, "sql", `UPDATE ${r.rid} SET ${prop} = ${lit} + ' '`);
+      await client.execute(db, "sql", `UPDATE ${r.rid} SET ${prop} = ${lit}`);
+      done += 1;
+    }
+    skip += rows.length;
+    if (rows.length < BATCH) break;
+  }
+  return done;
+}
+function sqlStr(s) {
+  return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
 // src/agent-memory/migrations/apply.ts
@@ -427,7 +470,12 @@ async function applySchemas(client, database, domains) {
     if (!schema) throw new Error(`Unknown schema domain: ${domain}`);
     const stmts = renderSchema(schema);
     for (const stmt of stmts) {
-      await client.execute(database, "sql", stmt);
+      const result = await client.execute(database, "sql", stmt);
+      const created = Array.isArray(result) ? result[0] : void 0;
+      if (stmt.endsWith("FULL_TEXT") && created?.created && (created.totalIndexed ?? 0) > 0) {
+        const m = /ON (\w+)\((\w+)\) FULL_TEXT$/.exec(stmt);
+        if (m) await backfillFullText(client, database, m[1], m[2]);
+      }
     }
   }
 }
