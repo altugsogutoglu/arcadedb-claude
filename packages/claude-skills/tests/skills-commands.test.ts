@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -56,6 +56,10 @@ describe("command: graph-index", () => {
     expect(md).toMatch(/^---/);
     expect(md).toMatch(/arcadedb-index/);
   });
+  it("aliases the bundled cli's config index subcommand", () => {
+    expect(md).toContain("config index");
+    expect(md).not.toContain("npm install -g");
+  });
 });
 
 describe("command: graph-status", () => {
@@ -63,5 +67,24 @@ describe("command: graph-status", () => {
   it("has frontmatter and references arcadedb-memory status", () => {
     expect(md).toMatch(/^---/);
     expect(md).toMatch(/arcadedb-memory status/);
+  });
+  it("also references config show", () => {
+    expect(md).toContain("config show");
+  });
+});
+
+describe("command: arcadedb-config", () => {
+  const md = readFile("commands/arcadedb-config.md");
+  it("has frontmatter with description and Bash allowed", () => {
+    expect(md).toMatch(/^---\n[\s\S]*description:/);
+    expect(md).toContain("allowed-tools: Bash");
+  });
+  it("documents every subcommand via the bundled cli", () => {
+    for (const sub of ["config show", "config set", "config test", "config forget", "config index"]) expect(md).toContain(sub);
+    expect(md).toContain("${CLAUDE_PLUGIN_ROOT}/hooks/cli.js");
+    expect(md).not.toContain("arcadedb-init");
+  });
+  it("arcadedb-init.md is gone", () => {
+    expect(existsSync(join(__dirname, "..", "commands", "arcadedb-init.md"))).toBe(false);
   });
 });

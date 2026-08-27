@@ -97,22 +97,15 @@ Two lines in any Claude Code session:
 
 The plugin's hooks are pre-bundled with esbuild as standalone JS files — **no `npm install` runs at plugin install time, no global `$PATH` setup is required, no sibling repos need to exist**.
 
-### Step 3 — Run `/arcadedb-init` inside your project
+### Step 3: configure only if your server needs a password
 
 ```
 cd ~/code/my-app
 claude
-> /arcadedb-init
+> /arcadedb-config set password changeme
 ```
 
-The command:
-1. Detects the running ArcadeDB server (or tells you how to start one).
-2. Prompts for credentials and writes `~/.config/arcadedb/.env` (`chmod 600`).
-3. Registers `my-app` in `~/.config/arcadedb/projects.json` (auto-detects basename, path, sane db name).
-4. Creates the shared `claude_memory` database if it doesn't exist yet.
-5. Offers to run `/graph-index --auto-migrate` right after to populate the project's code graph.
-
-Re-running `/arcadedb-init` from any other project just appends that project's entry. The `.env` step is skipped if already written.
+That is the only manual step. Open Claude Code in any git repo and the project registers itself, its code graph is indexed in the background, and decisions and insights from each session are captured into `claude_memory`. Run `/arcadedb-config` any time to see every setting, change the server, user, or memory DB, or index a project by hand.
 
 That's it. Future sessions in any registered project auto-inject context on startup:
 
@@ -126,7 +119,7 @@ ArcadeDB context loaded:
 
 | Command | Use |
 |---|---|
-| `/arcadedb-init` | First-run setup. Writes `.env`, registers the current project, creates `claude_memory`. Idempotent. |
+| `/arcadedb-config` | Show or change settings (server, user, password, memory DB, auto-index), test the connection, forget a project, or index now. The only manual knob. |
 | `/graph-status` | Shows ArcadeDB databases, type counts, project mappings |
 | `/graph-index` | Indexes the current project's codebase into its graph DB |
 | `/graph-decision <summary>` | Records a `:Decision` node with rationale, tied to the current repo |
@@ -156,18 +149,23 @@ await recordDecision(client, "claude_memory", {
 });
 ```
 
-## Config files written by `/arcadedb-init`
+## Configuration
 
-You can edit these by hand if you prefer.
+Nothing to run by hand. `~/.config/arcadedb/.env` and `~/.config/arcadedb/projects.json` are created automatically (with defaults) on first use, and `/arcadedb-config` is the one command that reads and writes them. You can still edit the files directly if you prefer.
 
-`~/.config/arcadedb/.env` — credentials, `chmod 600`:
+`~/.config/arcadedb/.env` (`chmod 600`), or the matching `ARCADEDB_*` shell variables, which always win over the file:
 ```
 ARCADEDB_HTTP_URI=http://localhost:2480
 ARCADEDB_USERNAME=root
 ARCADEDB_ROOT_PASSWORD=changeme
+ARCADEDB_MEMORY_DB=claude_memory
+ARCADEDB_AUTO_INDEX=on
 ```
 
-`~/.config/arcadedb/projects.json` — project-to-database map:
+- `ARCADEDB_AUTO_INDEX` (default `on`): whether new or stale projects are indexed automatically in the background. Set to `off` (or `/arcadedb-config set auto-index off`) to index only via `/graph-index` or `/arcadedb-config index`.
+- `ARCADEDB_INDEX_MAX_FILES` (default `20000`): skips indexing a repo larger than this file count rather than blocking the session.
+
+`~/.config/arcadedb/projects.json` (project-to-database map), written automatically as projects register themselves:
 ```json
 {
   "version": 1,

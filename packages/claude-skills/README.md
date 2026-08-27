@@ -36,6 +36,15 @@ All 4 packages are MIT, TypeScript, Node 20+.
 
 v0.1.0, pre-release, GitHub-only. Not yet published to npm or to any Claude Code marketplace. npm publish planned for v0.2.
 
+## Quick start
+
+1. Run ArcadeDB (any way you like), e.g.
+   `docker run -d --name arcadedb -p 2480:2480 -e JAVA_OPTS="-Darcadedb.server.rootPassword=changeme" arcadedata/arcadedb:latest`
+2. Install the plugin in Claude Code from the `arcadedb-claude` marketplace.
+3. If your server has a password: `/arcadedb-config set password changeme`. That is the only manual step.
+
+Open Claude Code in any git repo. The project registers itself, its code graph is indexed in the background, and decisions and insights from each session are captured into `claude_memory`. `/arcadedb-config` shows everything and changes ports, users, or the memory DB when they differ from the defaults.
+
 ## Install (from source)
 
 Requires `arcadedb-agent-memory` checked out as a sibling. Optionally `arcadedb-code-indexer` too if you want `/graph-index` to work.

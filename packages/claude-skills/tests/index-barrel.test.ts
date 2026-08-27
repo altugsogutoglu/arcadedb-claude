@@ -19,4 +19,10 @@ describe("package barrel", () => {
     expect(typeof api.logCapture).toBe("function");
     expect(typeof api.countTranscriptLines).toBe("function");
   });
+
+  it("exposes the config, server-probe, and index-need helpers", () => {
+    expect(typeof api.resolveConfig).toBe("function");
+    expect(typeof api.probeServer).toBe("function");
+    expect(typeof api.decideIndexNeed).toBe("function");
+  });
 });

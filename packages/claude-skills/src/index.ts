@@ -7,3 +7,8 @@ export { parseHookInput, readHookInput } from "./hook-input.js";
 export type { HookInput } from "./hook-input.js";
 export { logCapture } from "./capture-log.js";
 export { countTranscriptLines } from "./transcript-lines.js";
+export { resolveConfig, ensureEnvFile, writeEnvFile, readEnvFile, DEFAULTS } from "./config.js";
+export type { ResolvedConfig } from "./config.js";
+export { probeServer, probeBanner } from "./server-probe.js";
+export type { ProbeResult, ProbeStatus } from "./server-probe.js";
+export { decideIndexNeed, staleEditsSince } from "./index-need.js";
