@@ -2,6 +2,7 @@ import type { Client } from "./agent-memory/index.js";
 import { EMBEDDED_TYPES, type EmbeddedType } from "./agent-memory/index.js";
 import type { Embedder } from "./embed.js";
 import { TEXT_EXPR } from "./embed-runner.js";
+import { personalizedPageRank, hubDamping } from "./ppr.js";
 
 export type SearchMode = "hybrid" | "vector" | "text";
 
@@ -18,7 +19,7 @@ export interface SearchHit {
   /** Fused rank score (reciprocal rank fusion); comparable only within one search. */
   score: number;
   /** Which retrievers ranked this node. */
-  via: ("vector" | "text" | "ref")[];
+  via: ("vector" | "text" | "ref" | "graph")[];
   text: string;
   repo: string | null;
   at: string | null;
@@ -46,6 +47,10 @@ export interface SearchOptions {
   includeSuperseded?: boolean;
   /** Point-in-time view: only what was known and valid at this ISO instant. */
   asOf?: string;
+  /** Query-time personalized PageRank from the retriever hits over refs/sessions/supersession. Default on. */
+  graph?: boolean;
+  /** Expansion radius for the PageRank subgraph. Default 2. */
+  hops?: number;
 }
 
 const AT_EXPR: Record<EmbeddedType, string> = {
@@ -187,6 +192,13 @@ export async function hybridSearch(
 
   // Vector lists are per type and ordered by score inside each type only; re-rank across types by re-sorting
   // is not possible without scores, so keep insertion order (types in the order requested). Acceptable for RRF.
+  if (opts.graph !== false) {
+    const seeds = fuseRanks(lists).slice(0, candidates);
+    if (seeds.length > 0) {
+      const ranked = await graphRank(client, db, new Map(seeds.map(s => [s.key, s.score])), opts.hops ?? 2, typeOf, types, opts);
+      if (ranked.length > 0) lists["graph"] = ranked.slice(0, candidates);
+    }
+  }
   const fused = fuseRanks(lists).slice(0, limit);
   const hits = await hydrate(client, db, fused.map(f => ({ rid: f.key, type: typeOf.get(f.key)!, score: f.score, via: f.via as SearchHit["via"] })));
 
@@ -198,6 +210,72 @@ export async function hybridSearch(
     if (rel > 0) h.related = await relatedTurns(client, db, h.rid, rel);
   }
   return hits;
+}
+
+const GRAPH_EDGES = "'MENTIONS','DURING','COVERS','SUPERSEDES','FOLLOWS'";
+const MAX_SUBGRAPH_NODES = 5000;
+
+/**
+ * Pull the `hops`-neighbourhood of the seeds, run personalized PageRank on it and return the result
+ * nodes (of a requested, searchable type, inside the repo/time scope) best ranked by the walk.
+ */
+async function graphRank(
+  client: Client, db: string, seeds: Map<string, number>, hops: number,
+  typeOf: Map<string, EmbeddedType>, types: readonly EmbeddedType[], opts: SearchOptions,
+): Promise<string[]> {
+  const neighbors = new Map<string, string[]>();
+  const nodeType = new Map<string, string>();
+  for (const [rid, t] of typeOf) nodeType.set(rid, t);
+  let frontier = [...seeds.keys()];
+  const seen = new Set(frontier);
+  for (let hop = 0; hop < hops && frontier.length > 0 && seen.size < MAX_SUBGRAPH_NODES; hop++) {
+    const next: string[] = [];
+    for (let i = 0; i < frontier.length; i += 200) {
+      const batch = frontier.slice(i, i + 200);
+      const rows = await client.query<{ rid: string; type: string; nbrs: string[]; ntypes: string[] }>(db, "sql",
+        `SELECT @rid AS rid, @type AS type, both(${GRAPH_EDGES}).@rid AS nbrs, both(${GRAPH_EDGES}).@type AS ntypes FROM [${batch.join(",")}]`).catch(() => []);
+      for (const r of rows) {
+        nodeType.set(r.rid, r.type);
+        const list = neighbors.get(r.rid) ?? [];
+        (r.nbrs ?? []).forEach((n, j) => {
+          list.push(n);
+          nodeType.set(n, r.ntypes?.[j] ?? "?");
+          (neighbors.get(n) ?? neighbors.set(n, []).get(n)!).push(r.rid);
+          if (!seen.has(n)) { seen.add(n); next.push(n); }
+        });
+        neighbors.set(r.rid, list);
+      }
+    }
+    frontier = next;
+  }
+  if (neighbors.size === 0) return [];
+  // Dedupe adjacency lists (an edge seen from both ends appears twice).
+  for (const [k, v] of neighbors) neighbors.set(k, [...new Set(v)]);
+  const degree = (n: string): number => neighbors.get(n)?.length ?? 0;
+  const damp = hubDamping(degree);
+  const rank = personalizedPageRank({ neighbors }, seeds, { nodeWeight: n => (nodeType.get(n) === "Ref" ? damp(n) : 1) });
+
+  const wanted = new Set<string>(types);
+  const candidates = [...rank.entries()]
+    .filter(([rid]) => wanted.has(nodeType.get(rid) ?? ""))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 200)
+    .map(([rid]) => rid);
+  if (candidates.length === 0) return [];
+  // Keep only nodes that pass the same repo / time scope as the other retrievers, and record their type.
+  const kept: string[] = [];
+  for (const t of types) {
+    const ofType = candidates.filter(r => nodeType.get(r) === t);
+    if (ofType.length === 0) continue;
+    const repoClause = opts.repo ? ` AND repo = ${sqlStr(opts.repo)}` : "";
+    const rows = await client.query<{ rid: string }>(db, "sql",
+      `SELECT @rid AS rid FROM ${t} WHERE @rid IN [${ofType.join(",")}]${repoClause}${temporalClause(t, opts)}${t === "Session" ? " AND summary IS NOT NULL AND summary <> ''" : ""}`).catch(() => []);
+    const ok = new Set(rows.map(r => r.rid));
+    for (const r of ofType) if (ok.has(r)) { kept.push(r); typeOf.set(r, t); }
+  }
+  // Preserve PageRank order across types.
+  const order = new Map(candidates.map((r, i) => [r, i]));
+  return kept.sort((a, b) => order.get(a)! - order.get(b)!);
 }
 
 /** @deprecated use hybridSearch; kept for callers that pass an embedder and want vector-only ranking. */

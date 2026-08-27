@@ -1488,6 +1488,41 @@ if (isEntry) {
   });
 }
 
+// src/ppr.ts
+function personalizedPageRank(graph, seeds, opts = {}) {
+  const damping = opts.damping ?? 0.85;
+  const iterations = opts.iterations ?? 30;
+  const nodes = [...graph.neighbors.keys()];
+  if (nodes.length === 0) return /* @__PURE__ */ new Map();
+  const seedTotal = [...seeds.values()].reduce((a, b) => a + b, 0) || 1;
+  const teleport = /* @__PURE__ */ new Map();
+  for (const [n, w] of seeds) if (graph.neighbors.has(n)) teleport.set(n, w / seedTotal);
+  if (teleport.size === 0) return /* @__PURE__ */ new Map();
+  const weight = opts.nodeWeight ?? (() => 1);
+  const outW = /* @__PURE__ */ new Map();
+  for (const n of nodes) outW.set(n, (graph.neighbors.get(n) ?? []).reduce((a, m) => a + weight(m), 0));
+  let rank = new Map(teleport);
+  for (let i = 0; i < iterations; i++) {
+    const next = /* @__PURE__ */ new Map();
+    for (const [n, t] of teleport) next.set(n, (1 - damping) * t);
+    for (const [n, r] of rank) {
+      const total = outW.get(n) ?? 0;
+      if (total === 0) {
+        for (const [s, t] of teleport) next.set(s, (next.get(s) ?? 0) + damping * r * t);
+        continue;
+      }
+      for (const m of graph.neighbors.get(n) ?? []) {
+        next.set(m, (next.get(m) ?? 0) + damping * r * (weight(m) / total));
+      }
+    }
+    rank = next;
+  }
+  return rank;
+}
+function hubDamping(degree) {
+  return (node) => 1 / Math.log2(2 + degree(node));
+}
+
 // src/search.ts
 var AT_EXPR = {
   Turn: "ts",
@@ -1595,6 +1630,13 @@ async function hybridSearch(client, db, embed, query, opts = {}) {
     ).catch(() => []);
     (lists["ref"] ??= []).push(...remember("Turn", rows.map((r) => r.rid)));
   }
+  if (opts.graph !== false) {
+    const seeds = fuseRanks(lists).slice(0, candidates);
+    if (seeds.length > 0) {
+      const ranked = await graphRank(client, db, new Map(seeds.map((s) => [s.key, s.score])), opts.hops ?? 2, typeOf, types, opts);
+      if (ranked.length > 0) lists["graph"] = ranked.slice(0, candidates);
+    }
+  }
   const fused = fuseRanks(lists).slice(0, limit);
   const hits = await hydrate(client, db, fused.map((f) => ({ rid: f.key, type: typeOf.get(f.key), score: f.score, via: f.via })));
   const ctx = opts.context ?? 1;
@@ -1605,6 +1647,67 @@ async function hybridSearch(client, db, embed, query, opts = {}) {
     if (rel > 0) h.related = await relatedTurns(client, db, h.rid, rel);
   }
   return hits;
+}
+var GRAPH_EDGES = "'MENTIONS','DURING','COVERS','SUPERSEDES','FOLLOWS'";
+var MAX_SUBGRAPH_NODES = 5e3;
+async function graphRank(client, db, seeds, hops, typeOf, types, opts) {
+  const neighbors = /* @__PURE__ */ new Map();
+  const nodeType = /* @__PURE__ */ new Map();
+  for (const [rid, t] of typeOf) nodeType.set(rid, t);
+  let frontier = [...seeds.keys()];
+  const seen = new Set(frontier);
+  for (let hop = 0; hop < hops && frontier.length > 0 && seen.size < MAX_SUBGRAPH_NODES; hop++) {
+    const next = [];
+    for (let i = 0; i < frontier.length; i += 200) {
+      const batch = frontier.slice(i, i + 200);
+      const rows = await client.query(
+        db,
+        "sql",
+        `SELECT @rid AS rid, @type AS type, both(${GRAPH_EDGES}).@rid AS nbrs, both(${GRAPH_EDGES}).@type AS ntypes FROM [${batch.join(",")}]`
+      ).catch(() => []);
+      for (const r of rows) {
+        nodeType.set(r.rid, r.type);
+        const list = neighbors.get(r.rid) ?? [];
+        (r.nbrs ?? []).forEach((n, j) => {
+          list.push(n);
+          nodeType.set(n, r.ntypes?.[j] ?? "?");
+          (neighbors.get(n) ?? neighbors.set(n, []).get(n)).push(r.rid);
+          if (!seen.has(n)) {
+            seen.add(n);
+            next.push(n);
+          }
+        });
+        neighbors.set(r.rid, list);
+      }
+    }
+    frontier = next;
+  }
+  if (neighbors.size === 0) return [];
+  for (const [k, v] of neighbors) neighbors.set(k, [...new Set(v)]);
+  const degree = (n) => neighbors.get(n)?.length ?? 0;
+  const damp = hubDamping(degree);
+  const rank = personalizedPageRank({ neighbors }, seeds, { nodeWeight: (n) => nodeType.get(n) === "Ref" ? damp(n) : 1 });
+  const wanted = new Set(types);
+  const candidates = [...rank.entries()].filter(([rid]) => wanted.has(nodeType.get(rid) ?? "")).sort((a, b) => b[1] - a[1]).slice(0, 200).map(([rid]) => rid);
+  if (candidates.length === 0) return [];
+  const kept = [];
+  for (const t of types) {
+    const ofType = candidates.filter((r) => nodeType.get(r) === t);
+    if (ofType.length === 0) continue;
+    const repoClause = opts.repo ? ` AND repo = ${sqlStr2(opts.repo)}` : "";
+    const rows = await client.query(
+      db,
+      "sql",
+      `SELECT @rid AS rid FROM ${t} WHERE @rid IN [${ofType.join(",")}]${repoClause}${temporalClause(t, opts)}${t === "Session" ? " AND summary IS NOT NULL AND summary <> ''" : ""}`
+    ).catch(() => []);
+    const ok = new Set(rows.map((r) => r.rid));
+    for (const r of ofType) if (ok.has(r)) {
+      kept.push(r);
+      typeOf.set(r, t);
+    }
+  }
+  const order = new Map(candidates.map((r, i) => [r, i]));
+  return kept.sort((a, b) => order.get(a) - order.get(b));
 }
 async function hydrate(client, db, items) {
   const byType = /* @__PURE__ */ new Map();
@@ -2271,6 +2374,7 @@ function usage() {
   console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
   console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
   console.error("      ... [--as-of <ISO>] [--include-superseded]   point-in-time view | show decisions with a closed validity window");
+  console.error("      ... [--no-graph] [--hops <n>]                 skip / widen the query-time PageRank over refs, sessions, supersession (default on, 2 hops)");
   console.error("  decisions list [--repo <name>] [--all] [--as-of <ISO>] | supersede <newId> <oldId> [--at <ISO>] | reconcile");
   console.error("  rollup run | status | show <sessionDbId>   summarise ended sessions + weekly digests now | pending count | print a summary");
   console.error("  search reindex                             re-index existing rows for full-text search (one-off after upgrade)");
@@ -2312,7 +2416,7 @@ async function main3() {
     return 0;
   }
   if (cmd === "search") {
-    const VALUE_FLAGS = /* @__PURE__ */ new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related", "--as-of"]);
+    const VALUE_FLAGS = /* @__PURE__ */ new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related", "--as-of", "--hops"]);
     const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
     const query = positional.join(" ").trim();
     if (!query) {
@@ -2344,7 +2448,9 @@ async function main3() {
       context: num("context", 1),
       related: num("related", 3),
       includeSuperseded: rest.includes("--include-superseded"),
-      asOf: flag3(rest, "as-of")
+      asOf: flag3(rest, "as-of"),
+      graph: !rest.includes("--no-graph"),
+      hops: num("hops", 2)
     });
     if (!embedReady && mode === "hybrid") console.error("note: embedding runtime not ready, text-only results (arcadedb-skills embed install)");
     console.log(rest.includes("--json") ? JSON.stringify(hits, null, 2) : formatHits(hits));

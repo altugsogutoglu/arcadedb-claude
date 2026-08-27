@@ -39,6 +39,7 @@ function usage(): void {
   console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
   console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
   console.error("      ... [--as-of <ISO>] [--include-superseded]   point-in-time view | show decisions with a closed validity window");
+  console.error("      ... [--no-graph] [--hops <n>]                 skip / widen the query-time PageRank over refs, sessions, supersession (default on, 2 hops)");
   console.error("  decisions list [--repo <name>] [--all] [--as-of <ISO>] | supersede <newId> <oldId> [--at <ISO>] | reconcile");
   console.error("  rollup run | status | show <sessionDbId>   summarise ended sessions + weekly digests now | pending count | print a summary");
   console.error("  search reindex                             re-index existing rows for full-text search (one-off after upgrade)");
@@ -85,7 +86,7 @@ async function main(): Promise<number> {
   }
 
   if (cmd === "search") {
-    const VALUE_FLAGS = new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related", "--as-of"]);
+    const VALUE_FLAGS = new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related", "--as-of", "--hops"]);
     const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1]!)));
     const query = positional.join(" ").trim();
     if (!query) {
@@ -112,6 +113,7 @@ async function main(): Promise<number> {
       limit: Number.isFinite(limit) ? limit : 10, types, repo: flag(rest, "repo"), mode,
       context: num("context", 1), related: num("related", 3),
       includeSuperseded: rest.includes("--include-superseded"), asOf: flag(rest, "as-of"),
+      graph: !rest.includes("--no-graph"), hops: num("hops", 2),
     });
     if (!embedReady && mode === "hybrid") console.error("note: embedding runtime not ready, text-only results (arcadedb-skills embed install)");
     console.log(rest.includes("--json") ? JSON.stringify(hits, null, 2) : formatHits(hits));

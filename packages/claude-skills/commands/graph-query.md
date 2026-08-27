@@ -15,7 +15,7 @@ Run a query against the ArcadeDB graph. Accepts either a natural-language questi
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/hooks/cli.js search "<question>" --limit 10
    ```
-   Add `--types Turn` for raw conversation only, `--types Decision,Insight` for distilled notes, `--repo <name>` to scope, `--json` for context/related turns as data. Search is hybrid (vector + full-text + ref); exact identifiers work as-is. If the question names a file, class, commit or ticket ("where did we touch HeisterkampClient"), prefer:
+   Add `--types Turn` for raw conversation only, `--types Decision,Insight` for distilled notes, `--repo <name>` to scope, `--json` for context/related turns as data. Search is hybrid (vector + full-text + ref + graph PageRank); exact identifiers work as-is, and related decisions/summaries surface through the graph even without word overlap. If the question names a file, class, commit or ticket ("where did we touch HeisterkampClient"), prefer:
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/hooks/cli.js refs HeisterkampClient
    ```

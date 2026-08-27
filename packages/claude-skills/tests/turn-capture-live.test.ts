@@ -101,8 +101,9 @@ describe("raw turn capture (live)", () => {
 
   it("full-text search finds an exact identifier without embeddings and expands the hit with context and related turns", async () => {
     const hits = await hybridSearch(client, db.name, null, "ab12cd3", { limit: 3, types: ["Turn"], context: 1, related: 3 });
-    expect(hits).toHaveLength(1);
-    expect(hits[0]!.via).toEqual(["text", "ref"]);
+    expect(hits[0]!.via.slice(0, 2)).toEqual(["text", "ref"]);
+    // The other turns of the session arrive through the graph walk only.
+    for (const h of hits.slice(1)) expect(h.via).toEqual(["graph"]);
     expect(hits[0]!.text).toContain("ab12cd3");
     expect(hits[0]!.context!.before.map(b => b.text)).toEqual(["what colour is the office cat"]);
     expect(hits[0]!.context!.after).toEqual([]);

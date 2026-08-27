@@ -73,6 +73,8 @@ Three retrievers, fused with reciprocal rank fusion, no model call at query time
 - **text**: ArcadeDB FULL_TEXT (Lucene) index on `Turn.text` and the note fields. Finds exact identifiers: commit SHAs, class names, file paths, ticket ids.
 - **ref**: every captured Turn is scanned (regex, no LLM) for paths, PascalCase symbols, commits, tickets and URLs, stored as global `:Ref` nodes with `Turn-[:MENTIONS]->Ref` edges. A query token equal to a ref value pulls in every turn naming it, across repos.
 
+- **graph**: the fused hits seed a personalized PageRank over their 2-hop neighbourhood (refs, sessions, digests, supersession links; hub refs damped by degree). Nodes the walk ranks highly join the fusion as `via: graph`, so a decision recorded in the same session as a matching turn is found even though it shares no words with the query. `--no-graph`, `--hops <n>`.
+
 Turn hits are expanded: `↑`/`↓` the turn before and after in the same session, `~` turns from other sessions and repos that share a ref with the hit.
 
 ```bash

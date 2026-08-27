@@ -4,6 +4,11 @@ Keep a Changelog style. Newest on top. Since 0.8.0 there is one package: package
 
 ## [Unreleased]
 
+## arcadedb-claude-skills 0.12.0 - 2026-08-27
+
+### Added
+- Query-time personalized PageRank (the HippoRAG 2 idea). The fused retriever hits seed a random walk over their 2-hop neighbourhood (`MENTIONS`, `DURING`, `COVERS`, `SUPERSEDES`, `FOLLOWS`), hub `:Ref` nodes are damped by degree, and the walk's ranking joins vector, text and ref as a fourth RRF list (`via: graph`). Nodes with no lexical or semantic overlap with the query now surface when the graph connects them: the decision made in the session where a commit was discussed, the turns around a matching turn, the summary of that session. `--no-graph` and `--hops <n>` on `search`; the subgraph is capped at 5000 nodes and fetched in ~10 ms per hop on a local server.
+
 ## arcadedb-claude-skills 0.11.0 - 2026-08-27
 
 ### Added

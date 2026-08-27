@@ -121,6 +121,16 @@ describe("session rollup (live, fake model)", () => {
     expect(again).toMatchObject({ summarized: 0, digests: 0, failed: 0 });
     expect(calls.length).toBe(before);
 
+    // Query-time PageRank: searching for the commit reaches the decision made in that session, which
+    // shares no words with the query and is found through Turn -DURING-> Session <-DURING- Decision.
+    const viaGraph = await hybridSearch(client, db.name, null, "1a2b3c4d", { types: ["Turn", "Decision"], mode: "text", repo, context: 0, related: 0 });
+    const dec = viaGraph.find(h => h.type === "Decision" && h.text.startsWith("Seeders must not"));
+    expect(dec).toBeDefined();
+    expect(dec!.via).toEqual(["graph"]);
+    expect(viaGraph[0]!.type).toBe("Turn");
+    const noGraph = await hybridSearch(client, db.name, null, "1a2b3c4d", { types: ["Turn", "Decision"], mode: "text", repo, graph: false, context: 0, related: 0 });
+    expect(noGraph.some(h => h.type === "Decision")).toBe(false);
+
     // Summaries and digests are searchable through the same full-text path.
     const hits = await hybridSearch(client, db.name, null, "seeder admin edits", { types: ["Session", "Digest"], mode: "text", context: 0, related: 0 });
     expect(hits.map(h => h.type).sort()).toEqual(["Digest", "Session"]);
