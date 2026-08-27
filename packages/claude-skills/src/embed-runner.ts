@@ -17,6 +17,13 @@ export const TEXT_EXPR: Record<(typeof EMBEDDED_TYPES)[number], string> = {
   Insight: "ifnull(topic, '') + ' ' + ifnull(text, '')",
   Question: "ifnull(text, '')",
   Answer: "ifnull(text, '')",
+  Session: "ifnull(title, '') + ' ' + ifnull(summary, '')",
+  Digest: "ifnull(title, '') + ' ' + ifnull(text, '')",
+};
+
+/** Extra condition per type: only rows that have a text to embed. */
+export const EMBED_WHERE: Partial<Record<(typeof EMBEDDED_TYPES)[number], string>> = {
+  Session: " AND summary IS NOT NULL AND summary <> ''",
 };
 
 function flag(argv: string[], name: string): string | undefined {
@@ -31,7 +38,7 @@ export async function embedPending(client: Client, db: string, embed: Embedder, 
     const expr = TEXT_EXPR[type as keyof typeof TEXT_EXPR] ?? "text";
     for (;;) {
       const rows = await client.query<{ rid: string; body: string }>(db, "sql",
-        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL LIMIT ${BATCH}`);
+        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL${EMBED_WHERE[type as keyof typeof EMBED_WHERE] ?? ""} LIMIT ${BATCH}`);
       if (rows.length === 0) break;
       const vectors = await embed(rows.map(r => r.body ?? ""));
       for (let i = 0; i < rows.length; i++) {

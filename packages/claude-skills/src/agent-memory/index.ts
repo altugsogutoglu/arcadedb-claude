@@ -11,7 +11,7 @@ export { EMBEDDING_DIMENSIONS, EMBEDDED_TYPES } from "./schemas/memory.js";
 export type { EmbeddedType } from "./schemas/memory.js";
 export { renderSchema } from "./migrations/render.js";
 export { applySchemas } from "./migrations/apply.js";
-export { recordDecision, queryDecisions } from "./memory/decisions.js";
+export { recordDecision, queryDecisions, supersedeDecision, reconcileDecisions } from "./memory/decisions.js";
 export type { Decision, DecisionInput } from "./memory/decisions.js";
 export { recordInsight, queryInsights } from "./memory/insights.js";
 export type { Insight, InsightInput } from "./memory/insights.js";

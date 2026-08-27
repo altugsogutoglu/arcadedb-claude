@@ -205,6 +205,9 @@ function readHookInput() {
     return {};
   }
 }
+function hooksDisabled(env = process.env) {
+  return (env["ARCADEDB_HOOKS"] ?? "").toLowerCase() === "off";
+}
 
 // src/capture-log.ts
 import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2 } from "node:fs";
@@ -389,7 +392,10 @@ var DEFAULTS = {
   autoIndex: true,
   capture: true,
   embed: true,
-  extractor: "off"
+  extractor: "off",
+  rollup: true,
+  rollupModel: "haiku",
+  rollupTransport: "claude"
 };
 var KEYS2 = {
   httpUri: "ARCADEDB_HTTP_URI",
@@ -399,7 +405,10 @@ var KEYS2 = {
   autoIndex: "ARCADEDB_AUTO_INDEX",
   capture: "ARCADEDB_CAPTURE",
   embed: "ARCADEDB_EMBED",
-  extractor: "ARCADEDB_EXTRACTOR"
+  extractor: "ARCADEDB_EXTRACTOR",
+  rollup: "ARCADEDB_ROLLUP",
+  rollupModel: "ARCADEDB_ROLLUP_MODEL",
+  rollupTransport: "ARCADEDB_ROLLUP_TRANSPORT"
 };
 var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
@@ -441,6 +450,9 @@ function resolveConfig(opts = {}) {
   const embedRaw = pick(KEYS2.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
   const extractorRaw = pick(KEYS2.extractor, processEnv, file, DEFAULTS.extractor);
   const extractorMode = extractorRaw.value.toLowerCase();
+  const rollupRaw = pick(KEYS2.rollup, processEnv, file, DEFAULTS.rollup ? "on" : "off");
+  const rollupModelRaw = pick(KEYS2.rollupModel, processEnv, file, DEFAULTS.rollupModel);
+  const rollupTransportRaw = pick(KEYS2.rollupTransport, processEnv, file, DEFAULTS.rollupTransport);
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
@@ -451,6 +463,9 @@ function resolveConfig(opts = {}) {
     embed: embedRaw.value.toLowerCase() !== "off",
     // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
     extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
+    rollup: rollupRaw.value.toLowerCase() !== "off",
+    rollupModel: rollupModelRaw.value,
+    rollupTransport: rollupTransportRaw.value.toLowerCase() === "api" ? "api" : "claude",
     envPath,
     sources: {
       httpUri: httpUri.source,
@@ -460,7 +475,10 @@ function resolveConfig(opts = {}) {
       autoIndex: autoIndexRaw.source,
       capture: captureRaw.source,
       embed: embedRaw.source,
-      extractor: extractorRaw.source
+      extractor: extractorRaw.source,
+      rollup: rollupRaw.source,
+      rollupModel: rollupModelRaw.source,
+      rollupTransport: rollupTransportRaw.source
     }
   };
 }
@@ -559,6 +577,7 @@ var DEFAULT_TURNS = envInt("ARCADEDB_EXTRACT_TURNS", 10);
 var DEFAULT_INTERVAL_MS = envInt("ARCADEDB_EXTRACT_INTERVAL_MS", 15 * 60 * 1e3);
 var EXTRACT_IN_FLIGHT_MAX_MS = 10 * 60 * 1e3;
 async function main() {
+  if (hooksDisabled()) return;
   const input = readHookInput();
   if (input.stop_hook_active) {
     logCapture("skip", { reason: "stop_hook_active", session: input.session_id });

@@ -117,7 +117,7 @@ var coreSchema = {
 
 // src/agent-memory/schemas/memory.ts
 var EMBEDDING_DIMENSIONS = 384;
-var EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer"];
+var EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer", "Session", "Digest"];
 var embedding = {
   name: "embedding",
   type: "ARRAY_OF_FLOATS",
@@ -133,7 +133,13 @@ var memorySchema = {
         { name: "startedAt", type: "DATETIME", notNull: true },
         { name: "endedAt", type: "DATETIME" },
         { name: "repo", type: "STRING" },
-        { name: "summary", type: "STRING" }
+        { name: "summary", type: "STRING", fullTextIndex: true },
+        { name: "title", type: "STRING" },
+        { name: "summarizedAt", type: "DATETIME" },
+        { name: "summaryModel", type: "STRING" },
+        { name: "turnCount", type: "INTEGER" },
+        { name: "rollupAttempts", type: "INTEGER" },
+        embedding
       ]
     },
     {
@@ -157,6 +163,12 @@ var memorySchema = {
         { name: "rationale", type: "STRING", fullTextIndex: true },
         { name: "decidedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
+        // Bi-temporal validity: world time [validFrom, validTo), database time expiredAt. A closed window is
+        // a superseded decision; nothing is deleted.
+        { name: "validFrom", type: "DATETIME" },
+        { name: "validTo", type: "DATETIME" },
+        { name: "expiredAt", type: "DATETIME" },
+        { name: "supersededBy", type: "STRING" },
         embedding
       ]
     },
@@ -192,6 +204,23 @@ var memorySchema = {
       ]
     },
     {
+      // Weekly rollup per repo: one summary over that week's session summaries and decisions.
+      name: "Digest",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "repo", type: "STRING", notNull: true },
+        { name: "week", type: "STRING", notNull: true },
+        { name: "periodStart", type: "DATETIME", notNull: true },
+        { name: "periodEnd", type: "DATETIME", notNull: true },
+        { name: "title", type: "STRING" },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "sessionCount", type: "INTEGER" },
+        { name: "createdAt", type: "DATETIME", notNull: true },
+        { name: "model", type: "STRING" },
+        embedding
+      ]
+    },
+    {
       // Something a Turn refers to by name: a file path, symbol, commit, ticket or URL.
       // Global on purpose (no repo): the same path or class name links turns across repos.
       name: "Ref",
@@ -205,6 +234,7 @@ var memorySchema = {
   ],
   edges: [
     { name: "MENTIONS" },
+    { name: "COVERS" },
     { name: "ABOUT" },
     { name: "DURING" },
     { name: "FOLLOWS" },
@@ -381,6 +411,71 @@ function sqlStr(s) {
   return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
+// src/agent-memory/memory/decisions.ts
+async function supersedeDecision(client, db, newId, oldId, at) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const atClause = at ? `datetime(${cypherStr(at)})` : "coalesce(n.validFrom, n.decidedAt)";
+  const rows = await client.execute(
+    db,
+    "cypher",
+    `MATCH (n:Decision {id: ${cypherStr(newId)}}), (o:Decision {id: ${cypherStr(oldId)}})
+     WHERE n.id <> o.id
+     MERGE (n)-[:SUPERSEDES]->(o)
+     SET o.validTo = coalesce(o.validTo, ${atClause}),
+         o.expiredAt = coalesce(o.expiredAt, datetime(${cypherStr(now)})),
+         o.supersededBy = coalesce(o.supersededBy, n.id)
+     RETURN o.id AS id`
+  );
+  return rows.length > 0;
+}
+async function reconcileDecisions(client, db) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const rows = await client.execute(
+    db,
+    "cypher",
+    `MATCH (n:Decision)-[:SUPERSEDES]->(o:Decision)
+     WHERE o.validTo IS NULL
+     SET o.validTo = coalesce(n.validFrom, n.decidedAt),
+         o.expiredAt = datetime(${cypherStr(now)}),
+         o.supersededBy = n.id
+     RETURN o.id AS id`
+  );
+  return rows.length;
+}
+async function queryDecisions(client, db, filter = {}) {
+  const conds = [];
+  if (filter.repo) conds.push(`d.repo = ${cypherStr(filter.repo)}`);
+  if (filter.asOf) {
+    const t = `datetime(${cypherStr(filter.asOf)})`;
+    conds.push(`coalesce(d.validFrom, d.decidedAt) <= ${t} AND (d.validTo IS NULL OR d.validTo > ${t})`);
+  } else if (!filter.includeSuperseded) {
+    conds.push("d.validTo IS NULL");
+  }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const rows = await client.query(
+    db,
+    "cypher",
+    `MATCH (d:Decision) ${where}
+     RETURN d.id AS id, d.summary AS summary, d.rationale AS rationale, d.decidedAt AS decidedAt, d.repo AS repo,
+            d.validFrom AS validFrom, d.validTo AS validTo, d.expiredAt AS expiredAt, d.supersededBy AS supersededBy
+     ORDER BY d.decidedAt DESC`
+  );
+  return rows.map((r) => ({
+    id: r["id"],
+    summary: r["summary"] ?? "",
+    rationale: r["rationale"] ?? "",
+    decidedAt: r["decidedAt"],
+    repo: r["repo"] ?? "",
+    validFrom: r["validFrom"] ?? null,
+    validTo: r["validTo"] ?? null,
+    expiredAt: r["expiredAt"] ?? null,
+    supersededBy: r["supersededBy"] ?? null
+  }));
+}
+function cypherStr(s) {
+  return `'${s.replace(/'/g, "\\'")}'`;
+}
+
 // src/agent-memory/extractor/cypher-builder.ts
 function quote(v) {
   return '"' + String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
@@ -446,8 +541,15 @@ MERGE (s)-[r:${triple.verb}]->(o)
                 r.count = 1
   ON MATCH  SET r.lastAt = datetime(),
                 r.count = coalesce(r.count, 1) + 1
-MERGE (sess:Session {id: ${quote(sessionDbId)}})
+${supersedeClause(triple)}MERGE (sess:Session {id: ${quote(sessionDbId)}})
 MERGE (s)-[:DURING]->(sess)`;
+}
+function supersedeClause(triple) {
+  if (triple.verb !== "SUPERSEDES" || triple.subject.label !== "Decision" || triple.object.label !== "Decision") return "";
+  return `SET o.validTo = coalesce(o.validTo, s.validFrom, s.decidedAt, datetime()),
+    o.expiredAt = coalesce(o.expiredAt, datetime()),
+    o.supersededBy = coalesce(o.supersededBy, s.id)
+`;
 }
 
 // src/session-state.ts
@@ -725,7 +827,10 @@ var DEFAULTS = {
   autoIndex: true,
   capture: true,
   embed: true,
-  extractor: "off"
+  extractor: "off",
+  rollup: true,
+  rollupModel: "haiku",
+  rollupTransport: "claude"
 };
 var KEYS = {
   httpUri: "ARCADEDB_HTTP_URI",
@@ -735,7 +840,10 @@ var KEYS = {
   autoIndex: "ARCADEDB_AUTO_INDEX",
   capture: "ARCADEDB_CAPTURE",
   embed: "ARCADEDB_EMBED",
-  extractor: "ARCADEDB_EXTRACTOR"
+  extractor: "ARCADEDB_EXTRACTOR",
+  rollup: "ARCADEDB_ROLLUP",
+  rollupModel: "ARCADEDB_ROLLUP_MODEL",
+  rollupTransport: "ARCADEDB_ROLLUP_TRANSPORT"
 };
 var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
@@ -786,6 +894,9 @@ function resolveConfig(opts = {}) {
   const embedRaw = pick(KEYS.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
   const extractorRaw = pick(KEYS.extractor, processEnv, file, DEFAULTS.extractor);
   const extractorMode = extractorRaw.value.toLowerCase();
+  const rollupRaw = pick(KEYS.rollup, processEnv, file, DEFAULTS.rollup ? "on" : "off");
+  const rollupModelRaw = pick(KEYS.rollupModel, processEnv, file, DEFAULTS.rollupModel);
+  const rollupTransportRaw = pick(KEYS.rollupTransport, processEnv, file, DEFAULTS.rollupTransport);
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
@@ -796,6 +907,9 @@ function resolveConfig(opts = {}) {
     embed: embedRaw.value.toLowerCase() !== "off",
     // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
     extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
+    rollup: rollupRaw.value.toLowerCase() !== "off",
+    rollupModel: rollupModelRaw.value,
+    rollupTransport: rollupTransportRaw.value.toLowerCase() === "api" ? "api" : "claude",
     envPath,
     sources: {
       httpUri: httpUri.source,
@@ -805,7 +919,10 @@ function resolveConfig(opts = {}) {
       autoIndex: autoIndexRaw.source,
       capture: captureRaw.source,
       embed: embedRaw.source,
-      extractor: extractorRaw.source
+      extractor: extractorRaw.source,
+      rollup: rollupRaw.source,
+      rollupModel: rollupModelRaw.source,
+      rollupTransport: rollupTransportRaw.source
     }
   };
 }
@@ -1149,7 +1266,10 @@ var SET_KEYS = {
   "auto-index": { env: "ARCADEDB_AUTO_INDEX", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" },
   capture: { env: "ARCADEDB_CAPTURE", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" },
   embed: { env: "ARCADEDB_EMBED", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" },
-  extractor: { env: "ARCADEDB_EXTRACTOR", validate: (v) => v === "off" || v === "live" || v === "dryrun" ? null : "expected off, live or dryrun" }
+  extractor: { env: "ARCADEDB_EXTRACTOR", validate: (v) => v === "off" || v === "live" || v === "dryrun" ? null : "expected off, live or dryrun" },
+  rollup: { env: "ARCADEDB_ROLLUP", validate: (v) => v === "on" || v === "off" ? null : "expected on or off" },
+  "rollup-model": { env: "ARCADEDB_ROLLUP_MODEL", validate: (v) => v.trim() ? null : "expected a model name" },
+  "rollup-transport": { env: "ARCADEDB_ROLLUP_TRANSPORT", validate: (v) => v === "claude" || v === "api" ? null : "expected claude or api" }
 };
 var SET_KEY_NAMES = Object.keys(SET_KEYS).join("|");
 function pad(s, n) {
@@ -1168,6 +1288,7 @@ async function configShow(io) {
   io.out(`  ${pad("capture:", 12)}${pad(cfg.capture ? "on" : "off", 24)}(${cfg.sources.capture})`);
   io.out(`  ${pad("embed:", 12)}${pad(cfg.embed ? `on, runtime ${embedStatus()}` : "off", 24)}(${cfg.sources.embed})`);
   io.out(`  ${pad("extractor:", 12)}${pad(cfg.extractor, 24)}(${cfg.sources.extractor})`);
+  io.out(`  ${pad("rollup:", 12)}${pad(cfg.rollup ? `on, ${cfg.rollupModel} via ${cfg.rollupTransport}` : "off", 24)}(${cfg.sources.rollup})`);
   const probe = await probeServer(toClientEnv(cfg));
   const bannerLines = probeBanner(probe, cfg.username);
   io.out(probe.status === "ok" ? bannerLines[0].replace(/^ {2}/, "") : bannerLines[0]);
@@ -1290,7 +1411,12 @@ var TEXT_EXPR = {
   Decision: "ifnull(summary, '') + ' ' + ifnull(rationale, '')",
   Insight: "ifnull(topic, '') + ' ' + ifnull(text, '')",
   Question: "ifnull(text, '')",
-  Answer: "ifnull(text, '')"
+  Answer: "ifnull(text, '')",
+  Session: "ifnull(title, '') + ' ' + ifnull(summary, '')",
+  Digest: "ifnull(title, '') + ' ' + ifnull(text, '')"
+};
+var EMBED_WHERE = {
+  Session: " AND summary IS NOT NULL AND summary <> ''"
 };
 function flag(argv, name) {
   const i = argv.indexOf(`--${name}`);
@@ -1304,7 +1430,7 @@ async function embedPending(client, db, embed, types = EMBEDDED_TYPES) {
       const rows = await client.query(
         db,
         "sql",
-        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL LIMIT ${BATCH2}`
+        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL${EMBED_WHERE[type] ?? ""} LIMIT ${BATCH2}`
       );
       if (rows.length === 0) break;
       const vectors = await embed(rows.map((r) => r.body ?? ""));
@@ -1368,14 +1494,19 @@ var AT_EXPR = {
   Decision: "decidedAt",
   Insight: "createdAt",
   Question: "askedAt",
-  Answer: "answeredAt"
+  Answer: "answeredAt",
+  Session: "summarizedAt",
+  Digest: "createdAt"
 };
+var DISPLAY = { Session: "Summary" };
 var TEXT_INDEXED = {
   Turn: ["text"],
   Decision: ["summary", "rationale"],
   Insight: ["topic", "text"],
   Question: ["text"],
-  Answer: ["text"]
+  Answer: ["text"],
+  Session: ["summary"],
+  Digest: ["text"]
 };
 var RRF_K = 60;
 var CANDIDATE_FACTOR = 3;
@@ -1401,6 +1532,15 @@ function queryTokens(query) {
 function sqlStr2(s) {
   return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
+function temporalClause(type, opts) {
+  if (opts.asOf) {
+    const t = sqlStr2(opts.asOf);
+    if (type === "Decision") return ` AND coalesce(validFrom, decidedAt) <= ${t} AND (validTo IS NULL OR validTo > ${t})`;
+    return ` AND ${AT_EXPR[type]} <= ${t}`;
+  }
+  if (type === "Decision" && !opts.includeSuperseded) return " AND validTo IS NULL";
+  return "";
+}
 async function hybridSearch(client, db, embed, query, opts = {}) {
   const limit = opts.limit ?? 10;
   const types = opts.types ?? EMBEDDED_TYPES;
@@ -1409,6 +1549,7 @@ async function hybridSearch(client, db, embed, query, opts = {}) {
   const useText = mode !== "vector";
   const candidates = limit * CANDIDATE_FACTOR;
   const repoClause = opts.repo ? ` AND repo = ${sqlStr2(opts.repo)}` : "";
+  const scope = (type) => repoClause + temporalClause(type, opts);
   let vecLiteral = null;
   if (useVector) {
     const [vec] = await embed([query]);
@@ -1428,7 +1569,7 @@ async function hybridSearch(client, db, embed, query, opts = {}) {
         db,
         "sql",
         `SELECT @rid AS rid, vectorCosineSimilarity(embedding, ${vecLiteral}) AS score
-         FROM ${type} WHERE embedding IS NOT NULL${repoClause} ORDER BY score DESC LIMIT ${candidates}`
+         FROM ${type} WHERE embedding IS NOT NULL${scope(type)} ORDER BY score DESC LIMIT ${candidates}`
       );
       (lists["vector"] ??= []).push(...remember(type, rows.map((r) => r.rid)));
     }
@@ -1438,7 +1579,7 @@ async function hybridSearch(client, db, embed, query, opts = {}) {
           db,
           "sql",
           `SELECT @rid AS rid, $score AS score FROM ${type}
-           WHERE SEARCH_INDEX(${sqlStr2(`${type}[${prop}]`)}, ${sqlStr2(lucene)}) = true${repoClause}
+           WHERE SEARCH_INDEX(${sqlStr2(`${type}[${prop}]`)}, ${sqlStr2(lucene)}) = true${scope(type)}
            ORDER BY score DESC LIMIT ${candidates}`
         ).catch(() => []);
         (lists["text"] ??= []).push(...remember(type, rows.map((r) => r.rid)));
@@ -1450,7 +1591,7 @@ async function hybridSearch(client, db, embed, query, opts = {}) {
       db,
       "sql",
       `SELECT @rid AS rid FROM (SELECT expand(in('MENTIONS')) FROM Ref WHERE valueLc IN [${tokens.map(sqlStr2).join(",")}])
-       WHERE @type = 'Turn'${repoClause} LIMIT ${candidates}`
+       WHERE @type = 'Turn'${scope("Turn")} LIMIT ${candidates}`
     ).catch(() => []);
     (lists["ref"] ??= []).push(...remember("Turn", rows.map((r) => r.rid)));
   }
@@ -1473,12 +1614,19 @@ async function hydrate(client, db, items) {
     const rows = await client.query(
       db,
       "sql",
-      `SELECT @rid AS rid, ${TEXT_EXPR[type]} AS body, repo, ${AT_EXPR[type]} AS at, ${type === "Turn" ? "sessionId, idx" : "null AS sessionId, null AS idx"}
+      `SELECT @rid AS rid, ${TEXT_EXPR[type]} AS body, repo, ${AT_EXPR[type]} AS at, ${type === "Turn" ? "sessionId, idx" : type === "Session" ? "id AS sessionId, null AS idx" : "null AS sessionId, null AS idx"},
+              ${type === "Decision" ? "validTo" : "null AS validTo"}
        FROM ${type} WHERE @rid IN [${group.map((g) => g.rid).join(",")}]`
     );
     for (const r of rows) {
       const it = group.find((g) => g.rid === r.rid);
-      out.set(r.rid, { type, score: it.score, via: it.via, text: r.body ?? "", repo: r.repo ?? null, at: r.at ?? null, sessionId: r.sessionId ?? null, rid: r.rid, ...r.idx != null ? { idx: r.idx } : {} });
+      const hit = { type, score: it.score, via: it.via, text: r.body ?? "", repo: r.repo ?? null, at: r.at ?? null, sessionId: r.sessionId ?? null, rid: r.rid };
+      if (r.idx != null) hit.idx = r.idx;
+      if (type === "Decision" && r.validTo) {
+        hit.superseded = true;
+        hit.validTo = String(r.validTo);
+      }
+      out.set(r.rid, hit);
     }
   }
   return items.map((i) => out.get(i.rid)).filter((h) => !!h);
@@ -1516,7 +1664,7 @@ function formatHits(hits, maxChars = 400) {
   const clip = (t, n) => (t.length > n ? t.slice(0, n) + "..." : t).replace(/\n/g, " ");
   return hits.map((h, i) => {
     const text = h.text.length > maxChars ? h.text.slice(0, maxChars) + "..." : h.text;
-    const meta = [h.type, h.repo, h.at ? h.at.slice(0, 16) : null, h.via.join("+")].filter(Boolean).join(" | ");
+    const meta = [DISPLAY[h.type] ?? h.type, h.repo, h.at ? h.at.slice(0, 16) : null, h.via.join("+"), h.superseded ? `superseded ${String(h.validTo).slice(0, 10)}` : null].filter(Boolean).join(" | ");
     const lines = [`${i + 1}. [${h.score.toFixed(3)}] ${meta}`, `   ${text.replace(/\n/g, "\n   ")}`];
     for (const b of h.context?.before ?? []) lines.push(`   \u2191 ${b.role ?? "?"}: ${clip(b.text, 120)}`);
     for (const a of h.context?.after ?? []) lines.push(`   \u2193 ${a.role ?? "?"}: ${clip(a.text, 120)}`);
@@ -1569,13 +1717,13 @@ async function writeRefs(client, db, turnId, refs) {
     await client.execute(
       db,
       "cypher",
-      `MERGE (r:Ref {id: ${cypherStr(id)}})
-       SET r.kind = ${cypherStr(r.kind)}, r.value = ${cypherStr(r.value)}, r.valueLc = ${cypherStr(r.value.toLowerCase())}`
+      `MERGE (r:Ref {id: ${cypherStr2(id)}})
+       SET r.kind = ${cypherStr2(r.kind)}, r.value = ${cypherStr2(r.value)}, r.valueLc = ${cypherStr2(r.value.toLowerCase())}`
     );
     await client.execute(
       db,
       "cypher",
-      `MATCH (t:Turn {id: ${cypherStr(turnId)}}), (r:Ref {id: ${cypherStr(id)}})
+      `MATCH (t:Turn {id: ${cypherStr2(turnId)}}), (r:Ref {id: ${cypherStr2(id)}})
        WHERE NOT (t)-[:MENTIONS]->(r) CREATE (t)-[:MENTIONS]->(r)`
     );
   }
@@ -1597,12 +1745,520 @@ async function backfillRefs(client, db) {
   }
   return { turns, refs };
 }
-function cypherStr(s) {
+function cypherStr2(s) {
   return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
-// bin/arcadedb-skills.ts
+// src/rollup-runner.ts
+import { unlinkSync as unlinkSync4 } from "node:fs";
+import { join as join10 } from "node:path";
+import { randomUUID } from "node:crypto";
+
+// src/embed-spawn.ts
+import { spawn as spawn2 } from "node:child_process";
+import { closeSync as closeSync3, openSync as openSync3 } from "node:fs";
+import { join as join9 } from "node:path";
+function spawnEmbedRunner(args) {
+  try {
+    const runner = args.runner ?? runnerPath("embed-runner");
+    const log = openSync3(join9(configDir(), "embed.log"), "a");
+    const argv = runnerArgv(runner, ["--db", args.db]);
+    const child = spawn2(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
+    closeSync3(log);
+    child.unref();
+    return child.pid ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// src/rollup-llm.ts
+import { spawn as spawn3 } from "node:child_process";
+var claudeTransport = (call) => new Promise((resolve, reject) => {
+  const args = [
+    "-p",
+    "--model",
+    call.model,
+    "--output-format",
+    "json",
+    "--no-session-persistence",
+    "--tools",
+    "",
+    "--setting-sources",
+    "",
+    "--strict-mcp-config",
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--system-prompt",
+    call.system
+  ];
+  const child = spawn3("claude", args, {
+    env: { ...process.env, ARCADEDB_HOOKS: "off", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  let out = "";
+  let err = "";
+  child.stdout.on("data", (d) => {
+    out += d;
+  });
+  child.stderr.on("data", (d) => {
+    err += d;
+  });
+  child.on("error", reject);
+  child.on("close", (code) => {
+    if (code !== 0) return reject(new Error(`claude -p exited ${code}: ${err.trim().slice(0, 300)}`));
+    let parsed;
+    try {
+      parsed = JSON.parse(out);
+    } catch {
+      return reject(new Error(`claude -p returned non-JSON: ${out.slice(0, 200)}`));
+    }
+    if (parsed.is_error || typeof parsed.result !== "string") return reject(new Error(`claude -p error: ${String(parsed.result).slice(0, 300)}`));
+    if (/not logged in/i.test(parsed.result)) return reject(new Error("claude -p: not logged in (run `claude` once, or set ARCADEDB_ROLLUP_TRANSPORT=api with ANTHROPIC_API_KEY)"));
+    resolve({
+      text: parsed.result,
+      costUsd: typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : null,
+      inputTokens: parsed.usage?.input_tokens ?? null,
+      outputTokens: parsed.usage?.output_tokens ?? null
+    });
+  });
+  child.stdin.end(call.prompt);
+});
+var MODEL_ALIASES = {
+  haiku: "claude-haiku-4-5-20251001",
+  sonnet: "claude-sonnet-5",
+  opus: "claude-opus-5"
+};
+var apiTransport = async (call) => {
+  const key = process.env["ANTHROPIC_API_KEY"];
+  if (!key) throw new Error("ANTHROPIC_API_KEY is not set (ARCADEDB_ROLLUP_TRANSPORT=api)");
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: MODEL_ALIASES[call.model] ?? call.model,
+      max_tokens: call.maxTokens ?? 2048,
+      system: call.system,
+      messages: [{ role: "user", content: call.prompt }]
+    })
+  });
+  if (!res.ok) throw new Error(`Messages API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const body = await res.json();
+  const text = (body.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
+  return { text, costUsd: null, inputTokens: body.usage?.input_tokens ?? null, outputTokens: body.usage?.output_tokens ?? null };
+};
+function selectTransport(name) {
+  return name === "api" ? apiTransport : claudeTransport;
+}
+
+// src/rollup.ts
+var MAX_TRANSCRIPT_CHARS = 24e3;
+var MIN_TURNS_FOR_ROLLUP = 4;
+var MAX_DECISIONS_PER_SESSION = 5;
+var MAX_ROLLUP_ATTEMPTS = 3;
+function clipTranscript(turns, maxChars = MAX_TRANSCRIPT_CHARS) {
+  const lines = turns.map((t) => `[${t.idx}] ${t.role}: ${t.text.trim()}`);
+  const full = lines.join("\n\n");
+  if (full.length <= maxChars) return full;
+  const headBudget = Math.floor(maxChars * 0.6);
+  const tailBudget = maxChars - headBudget;
+  const head = [];
+  let used = 0;
+  for (const l of lines) {
+    if (used + l.length + 2 > headBudget) break;
+    head.push(l);
+    used += l.length + 2;
+  }
+  const tail = [];
+  used = 0;
+  for (let i = lines.length - 1; i >= head.length; i--) {
+    const l = lines[i];
+    if (used + l.length + 2 > tailBudget) break;
+    tail.unshift(l);
+    used += l.length + 2;
+  }
+  const cut = lines.length - head.length - tail.length;
+  return [...head, `[... ${cut} turns omitted ...]`, ...tail].join("\n\n");
+}
+var SESSION_SYSTEM_PROMPT = "You summarise one Claude Code session for a developer's long-term memory graph. Answer with strict JSON only, no prose, no markdown fences.";
+function buildSessionPrompt(input) {
+  const fmt = (d) => `- id=${d.id} (${d.decidedAt.slice(0, 10)}): ${d.summary}${d.rationale ? ` \u2014 ${d.rationale}` : ""}`;
+  return [
+    `Repo: ${input.repo}`,
+    `Session: ${input.startedAt.slice(0, 16)} to ${(input.endedAt ?? "").slice(0, 16) || "?"}, ${input.turns.length} turns.`,
+    "",
+    "TRANSCRIPT (user prompts and assistant answers, tool output omitted):",
+    clipTranscript(input.turns),
+    "",
+    input.recorded.length ? "DECISIONS ALREADY RECORDED FOR THIS SESSION (do not repeat them):\n" + input.recorded.map(fmt).join("\n") : "DECISIONS ALREADY RECORDED FOR THIS SESSION: none",
+    "",
+    input.candidates.length ? "PRIOR DECISIONS OF THIS REPO THAT MIGHT NOW BE REPLACED (use their id in `supersedes` only when this session clearly reversed or replaced them):\n" + input.candidates.map(fmt).join("\n") : "PRIOR DECISIONS OF THIS REPO: none",
+    "",
+    "Return JSON with exactly this shape:",
+    "{",
+    '  "title": "<= 80 chars, what the session was about",',
+    '  "summary": "markdown, <= 1200 chars, sections: **Outcome**, **Changed** (files, commits, versions), **Decided** (with why), **Open** (unfinished, blockers)",',
+    `  "decisions": [ up to ${MAX_DECISIONS_PER_SESSION} NEW durable decisions: {"summary": "<= 160 chars", "rationale": "<= 300 chars", "supersedes": ["<prior id>"]} ]`,
+    "}",
+    "Rules: decisions are choices with lasting effect (architecture, library, process, naming), not tasks done. Empty `decisions` is a good answer for a session without one. `supersedes` ids must come from the prior list."
+  ].join("\n");
+}
+var DIGEST_SYSTEM_PROMPT = "You write a weekly digest of a developer's work on one repository from that week's session summaries, for a long-term memory graph. Answer with strict JSON only, no prose, no markdown fences.";
+function buildDigestPrompt(input) {
+  const sessions = input.sessions.map((s) => `### ${s.startedAt.slice(0, 16)}${s.title ? ` \u2014 ${s.title}` : ""}
+${s.summary.trim()}`).join("\n\n");
+  const decisions = input.decisions.length ? input.decisions.map((d) => `- ${d.decidedAt.slice(0, 10)}: ${d.summary}${d.rationale ? ` \u2014 ${d.rationale}` : ""}`).join("\n") : "none";
+  return [
+    `Repo: ${input.repo}. Week ${input.week} (${input.periodStart.slice(0, 10)} to ${input.periodEnd.slice(0, 10)}), ${input.sessions.length} sessions.`,
+    "",
+    "SESSION SUMMARIES:",
+    sessions,
+    "",
+    "DECISIONS RECORDED THIS WEEK:",
+    decisions,
+    "",
+    "Return JSON with exactly this shape:",
+    '{ "title": "<= 80 chars", "text": "markdown, <= 2000 chars, sections: **Shipped**, **Decided**, **Learned**, **Open**; keep commit ids, file paths and version numbers" }'
+  ].join("\n");
+}
+function parseSessionRollup(raw) {
+  const obj = parseJsonObject(raw);
+  if (!obj) return null;
+  const title = str(obj["title"], 120);
+  const summary = str(obj["summary"], 4e3);
+  if (!title || !summary) return null;
+  const decisions = [];
+  const list = Array.isArray(obj["decisions"]) ? obj["decisions"] : [];
+  for (const d of list.slice(0, MAX_DECISIONS_PER_SESSION)) {
+    if (!d || typeof d !== "object") continue;
+    const rec = d;
+    const s = str(rec["summary"], 300);
+    if (!s) continue;
+    const supersedes = Array.isArray(rec["supersedes"]) ? rec["supersedes"].filter((x) => typeof x === "string" && x.length > 0) : [];
+    decisions.push({ summary: s, rationale: str(rec["rationale"], 600) ?? "", supersedes });
+  }
+  return { title, summary, decisions };
+}
+function parseDigest(raw) {
+  const obj = parseJsonObject(raw);
+  if (!obj) return null;
+  const title = str(obj["title"], 120);
+  const text = str(obj["text"], 6e3);
+  if (!title || !text) return null;
+  return { title, text };
+}
+function parseJsonObject(raw) {
+  const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    const v = JSON.parse(trimmed.slice(start, end + 1));
+    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+function str(v, max) {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t ? t.length > max ? t.slice(0, max) : t : null;
+}
+function isoWeek(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay() || 7;
+  const monday = new Date(d);
+  monday.setUTCDate(d.getUTCDate() - day + 1);
+  const thursday = new Date(monday);
+  thursday.setUTCDate(monday.getUTCDate() + 3);
+  const yearStart = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((thursday.getTime() - yearStart.getTime()) / 864e5 + 1) / 7);
+  const end = new Date(monday);
+  end.setUTCDate(monday.getUTCDate() + 7);
+  return { key: `${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}`, start: monday, end };
+}
+function digestId(repo, weekKey) {
+  return `${repo}:${weekKey}`;
+}
+
+// src/rollup-runner.ts
+var ABANDON_AFTER_MS = 6 * 60 * 60 * 1e3;
+var CANDIDATE_DECISIONS = 8;
+function sqlStr3(s) {
+  return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+function cypherStr3(s) {
+  return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+function iso(d) {
+  return d.toISOString();
+}
+async function closeAbandonedSessions(deps) {
+  const now = (deps.now ?? (() => /* @__PURE__ */ new Date()))();
+  const cutoff = new Date(now.getTime() - ABANDON_AFTER_MS);
+  const rows = await deps.client.query(
+    deps.db,
+    "sql",
+    `SELECT id, (SELECT max(ts) FROM Turn WHERE sessionId = $parent.$current.id) AS last FROM Session
+     WHERE endedAt IS NULL AND startedAt < ${sqlStr3(iso(cutoff))}`
+  ).catch(() => []);
+  let closed = 0;
+  for (const r of rows) {
+    const endedAt = r.last ?? iso(cutoff);
+    await deps.client.execute(deps.db, "sql", `UPDATE Session SET endedAt = ${sqlStr3(String(endedAt).replace(" ", "T"))} WHERE id = ${sqlStr3(r.id)}`);
+    closed += 1;
+  }
+  return closed;
+}
+var LLM_BATCH = 20;
+async function pendingSessions(client, db) {
+  const rows = await client.query(
+    db,
+    "sql",
+    `SELECT id, repo, startedAt, endedAt, rollupAttempts AS attempts FROM Session
+     WHERE endedAt IS NOT NULL AND summary IS NULL AND (rollupAttempts IS NULL OR rollupAttempts < ${MAX_ROLLUP_ATTEMPTS})
+     ORDER BY endedAt ASC`
+  );
+  if (rows.length === 0) return [];
+  const counts = /* @__PURE__ */ new Map();
+  for (const c of await client.query(db, "sql", "SELECT sessionId, count(*) AS n FROM Turn GROUP BY sessionId")) {
+    counts.set(c.sessionId, Number(c.n));
+  }
+  const out = [];
+  let budget = LLM_BATCH;
+  for (const r of rows) {
+    const n = counts.get(r.id) ?? 0;
+    if (n < MIN_TURNS_FOR_ROLLUP) {
+      await client.execute(db, "sql", `UPDATE Session SET summary = '', turnCount = ${n} WHERE id = ${sqlStr3(r.id)}`);
+      out.push({ ...r, turnCount: n });
+      continue;
+    }
+    if (budget > 0) {
+      out.push({ ...r, turnCount: n });
+      budget -= 1;
+    }
+  }
+  return out;
+}
+async function rollupSession(deps, session, stats) {
+  const { client, db } = deps;
+  if (session.turnCount < MIN_TURNS_FOR_ROLLUP) {
+    stats.skipped += 1;
+    return;
+  }
+  const turns = await client.query(
+    db,
+    "sql",
+    `SELECT idx, role, text FROM Turn WHERE sessionId = ${sqlStr3(session.id)} ORDER BY idx ASC`
+  );
+  const repo = session.repo ?? "unknown";
+  const recorded = await client.query(
+    db,
+    "cypher",
+    `MATCH (d:Decision)-[:DURING]->(s:Session {id: ${cypherStr3(session.id)}})
+     RETURN d.id AS id, d.summary AS summary, d.rationale AS rationale, d.decidedAt AS decidedAt`
+  ).catch(() => []);
+  const candidates = await priorDecisionCandidates(deps, repo, session, turns, recorded.map((r) => r.id));
+  await client.execute(db, "sql", `UPDATE Session SET rollupAttempts = ${(session.attempts ?? 0) + 1} WHERE id = ${sqlStr3(session.id)}`);
+  const prompt = buildSessionPrompt({ repo, startedAt: String(session.startedAt), endedAt: session.endedAt ? String(session.endedAt) : null, turns, recorded, candidates });
+  const res = await deps.llm({ system: SESSION_SYSTEM_PROMPT, prompt, model: deps.model, maxTokens: 2048 });
+  stats.costUsd += res.costUsd ?? 0;
+  const parsed = parseSessionRollup(res.text);
+  if (!parsed) {
+    stats.failed += 1;
+    logCapture("rollup_invalid", { session: session.id, sample: res.text.slice(0, 200) });
+    return;
+  }
+  const now = iso((deps.now ?? (() => /* @__PURE__ */ new Date()))());
+  await client.execute(
+    db,
+    "cypher",
+    `MATCH (s:Session {id: ${cypherStr3(session.id)}})
+     SET s.summary = ${cypherStr3(parsed.summary)}, s.title = ${cypherStr3(parsed.title)},
+         s.summarizedAt = datetime(${cypherStr3(now)}), s.summaryModel = ${cypherStr3(deps.model)},
+         s.turnCount = ${turns.length}, s.embedding = null`
+  );
+  stats.summarized += 1;
+  const known = new Set(candidates.map((c) => c.id));
+  const validFrom = String(session.startedAt).replace(" ", "T");
+  for (const d of parsed.decisions) {
+    const id = randomUUID();
+    await client.execute(
+      db,
+      "cypher",
+      `MATCH (s:Session {id: ${cypherStr3(session.id)}})
+       CREATE (d:Decision {id: ${cypherStr3(id)}, summary: ${cypherStr3(d.summary)}, rationale: ${cypherStr3(d.rationale)},
+                           decidedAt: datetime(${cypherStr3(now)}), validFrom: datetime(${cypherStr3(validFrom)}), repo: ${cypherStr3(repo)}})
+       CREATE (d)-[:DURING]->(s)`
+    );
+    stats.decisions += 1;
+    for (const old of d.supersedes) {
+      if (!known.has(old)) continue;
+      if (await supersedeDecision(client, db, id, old, validFrom)) stats.superseded += 1;
+    }
+  }
+}
+async function priorDecisionCandidates(deps, repo, session, turns, exclude) {
+  const probe = turns.filter((t) => t.role === "user").map((t) => t.text.slice(0, 200)).join(" ").slice(0, 1500);
+  const out = /* @__PURE__ */ new Map();
+  const add = async (rows) => {
+    for (const r of rows) if (!exclude.includes(r.id) && !out.has(r.id)) out.set(r.id, r);
+  };
+  if (probe.trim()) {
+    const hits = await hybridSearch(deps.client, deps.db, null, probe, { limit: CANDIDATE_DECISIONS, types: ["Decision"], repo, mode: "text", context: 0, related: 0 }).catch(() => []);
+    if (hits.length) {
+      const rows = await deps.client.query(
+        deps.db,
+        "sql",
+        `SELECT id, summary, rationale, coalesce(validFrom, decidedAt) AS decidedAt FROM Decision
+         WHERE @rid IN [${hits.map((h) => h.rid).join(",")}] AND validTo IS NULL AND coalesce(validFrom, decidedAt) < ${sqlStr3(String(session.startedAt).replace(" ", "T"))}`
+      ).catch(() => []);
+      await add(rows);
+    }
+  }
+  if (out.size < CANDIDATE_DECISIONS) {
+    const recent = await deps.client.query(
+      deps.db,
+      "sql",
+      `SELECT id, summary, rationale, coalesce(validFrom, decidedAt) AS decidedAt FROM Decision WHERE repo = ${sqlStr3(repo)} AND validTo IS NULL
+       AND coalesce(validFrom, decidedAt) < ${sqlStr3(String(session.startedAt).replace(" ", "T"))} ORDER BY validFrom DESC, decidedAt DESC LIMIT ${CANDIDATE_DECISIONS}`
+    ).catch(() => []);
+    await add(recent);
+  }
+  return [...out.values()].slice(0, CANDIDATE_DECISIONS);
+}
+async function rollupDigests(deps, stats) {
+  const { client, db } = deps;
+  const now = (deps.now ?? (() => /* @__PURE__ */ new Date()))();
+  const sessions = await client.query(
+    db,
+    "sql",
+    `SELECT id, repo, startedAt, title, summary, summarizedAt FROM Session
+     WHERE summary IS NOT NULL AND summary <> '' AND repo IS NOT NULL ORDER BY startedAt ASC`
+  );
+  const buckets = /* @__PURE__ */ new Map();
+  for (const s of sessions) {
+    const started = new Date(String(s.startedAt).replace(" ", "T"));
+    const week = isoWeek(started);
+    if (week.end.getTime() > now.getTime()) continue;
+    const key = digestId(s.repo, week.key);
+    const b = buckets.get(key) ?? { repo: s.repo, week, sessions: [] };
+    b.sessions.push(s);
+    buckets.set(key, b);
+  }
+  for (const [id, b] of buckets) {
+    const existing = await client.query(db, "sql", `SELECT createdAt FROM Digest WHERE id = ${sqlStr3(id)}`);
+    const newest = b.sessions.map((s) => String(s.summarizedAt)).sort().pop();
+    if (existing.length && String(existing[0].createdAt) >= newest) continue;
+    const decisions = await client.query(
+      db,
+      "sql",
+      `SELECT id, summary, rationale, coalesce(validFrom, decidedAt) AS decidedAt FROM Decision WHERE repo = ${sqlStr3(b.repo)}
+       AND coalesce(validFrom, decidedAt) >= ${sqlStr3(iso(b.week.start))} AND coalesce(validFrom, decidedAt) < ${sqlStr3(iso(b.week.end))} ORDER BY decidedAt ASC`
+    ).catch(() => []);
+    const prompt = buildDigestPrompt({
+      repo: b.repo,
+      week: b.week.key,
+      periodStart: iso(b.week.start),
+      periodEnd: iso(b.week.end),
+      sessions: b.sessions.map((s) => ({ id: s.id, startedAt: String(s.startedAt), title: s.title, summary: s.summary })),
+      decisions
+    });
+    const res = await deps.llm({ system: DIGEST_SYSTEM_PROMPT, prompt, model: deps.model, maxTokens: 3e3 });
+    stats.costUsd += res.costUsd ?? 0;
+    const parsed = parseDigest(res.text);
+    if (!parsed) {
+      stats.failed += 1;
+      logCapture("digest_invalid", { digest: id, sample: res.text.slice(0, 200) });
+      continue;
+    }
+    const createdAt = iso((deps.now ?? (() => /* @__PURE__ */ new Date()))());
+    await client.execute(
+      db,
+      "cypher",
+      `MERGE (g:Digest {id: ${cypherStr3(id)}})
+       SET g.repo = ${cypherStr3(b.repo)}, g.week = ${cypherStr3(b.week.key)},
+           g.periodStart = datetime(${cypherStr3(iso(b.week.start))}), g.periodEnd = datetime(${cypherStr3(iso(b.week.end))}),
+           g.title = ${cypherStr3(parsed.title)}, g.text = ${cypherStr3(parsed.text)}, g.sessionCount = ${b.sessions.length},
+           g.createdAt = datetime(${cypherStr3(createdAt)}), g.model = ${cypherStr3(deps.model)}, g.embedding = null`
+    );
+    for (const s of b.sessions) {
+      await client.execute(
+        db,
+        "cypher",
+        `MATCH (g:Digest {id: ${cypherStr3(id)}}), (s:Session {id: ${cypherStr3(s.id)}}) MERGE (g)-[:COVERS]->(s)`
+      );
+    }
+    stats.digests += 1;
+  }
+}
+async function runRollup(deps) {
+  const stats = { closed: 0, summarized: 0, skipped: 0, failed: 0, decisions: 0, superseded: 0, digests: 0, costUsd: 0 };
+  stats.closed = await closeAbandonedSessions(deps);
+  for (const s of await pendingSessions(deps.client, deps.db)) {
+    try {
+      await rollupSession(deps, s, stats);
+    } catch (err) {
+      stats.failed += 1;
+      logCapture("rollup_failed", { session: s.id, error: err?.message ?? String(err) });
+    }
+  }
+  try {
+    await rollupDigests(deps, stats);
+  } catch (err) {
+    stats.failed += 1;
+    logCapture("digest_failed", { error: err?.message ?? String(err) });
+  }
+  return stats;
+}
 function flag2(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  return i === -1 ? void 0 : argv[i + 1];
+}
+async function main2() {
+  const db = flag2(process.argv, "db");
+  if (!db) {
+    console.error("usage: rollup-runner --db <name>");
+    process.exit(2);
+  }
+  const cfg = resolveConfig();
+  if (!cfg.rollup) {
+    logCapture("rollup_skip", { reason: "off", db });
+    return;
+  }
+  const lock = join10(configDir(), "rollup.lock");
+  if (!acquireLock(lock)) {
+    logCapture("rollup_skip", { reason: "locked", db });
+    return;
+  }
+  const started = Date.now();
+  try {
+    const client = new Client(toClientEnv(cfg), { timeoutMs: 3e4 });
+    const stats = await runRollup({ client, db, model: cfg.rollupModel, llm: selectTransport(cfg.rollupTransport) });
+    if (stats.summarized || stats.digests || stats.failed || stats.closed) {
+      logCapture("rollup_done", { db, ...stats, costUsd: Number(stats.costUsd.toFixed(4)), ms: Date.now() - started });
+    }
+    if ((stats.summarized || stats.digests) && cfg.embed && isEmbedInstalled()) spawnEmbedRunner({ db });
+  } catch (err) {
+    logCapture("rollup_failed", { db, error: err?.message ?? String(err) });
+    process.exitCode = 1;
+  } finally {
+    try {
+      unlinkSync4(lock);
+    } catch {
+    }
+  }
+}
+var isEntry2 = process.argv[1] !== void 0 && /rollup-runner\.(?:js|ts)$/.test(process.argv[1]);
+if (isEntry2) {
+  main2().catch((err) => {
+    logCapture("rollup_failed", { error: err?.message ?? String(err) });
+    process.exit(1);
+  });
+}
+
+// bin/arcadedb-skills.ts
+function flag3(argv, name) {
   const i = argv.indexOf(`--${name}`);
   return i === -1 ? void 0 : argv[i + 1];
 }
@@ -1614,20 +2270,23 @@ function usage() {
   console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>] [--repo <name>]");
   console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
   console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
+  console.error("      ... [--as-of <ISO>] [--include-superseded]   point-in-time view | show decisions with a closed validity window");
+  console.error("  decisions list [--repo <name>] [--all] [--as-of <ISO>] | supersede <newId> <oldId> [--at <ISO>] | reconcile");
+  console.error("  rollup run | status | show <sessionDbId>   summarise ended sessions + weekly digests now | pending count | print a summary");
   console.error("  search reindex                             re-index existing rows for full-text search (one-off after upgrade)");
   console.error("  refs backfill | <value>                    link :Ref nodes for old turns | list turns naming a path/symbol/commit/ticket");
   console.error("  embed install | status | run              manage the local embedding runtime");
   console.error("  extract-replay <sessionDbId|audit.jsonl> [--repo <name>]  re-write a session's audited triples into the graph (repairs nodes written without text)");
 }
-async function main2() {
+async function main3() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (!cmd) {
     usage();
     return 1;
   }
   if (cmd === "mark-extracted") {
-    const session = flag2(rest, "session");
-    const turnArg = flag2(rest, "turn");
+    const session = flag3(rest, "session");
+    const turnArg = flag3(rest, "turn");
     const turn = Number(turnArg);
     if (!session || turnArg === void 0 || !Number.isFinite(turn)) {
       console.error("usage: arcadedb-skills mark-extracted --session <id> --turn <n>");
@@ -1653,41 +2312,130 @@ async function main2() {
     return 0;
   }
   if (cmd === "search") {
-    const VALUE_FLAGS = /* @__PURE__ */ new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related"]);
+    const VALUE_FLAGS = /* @__PURE__ */ new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related", "--as-of"]);
     const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
     const query = positional.join(" ").trim();
     if (!query) {
       console.error("usage: arcadedb-skills search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
       return 1;
     }
-    const mode = flag2(rest, "mode") ?? "hybrid";
+    const mode = flag3(rest, "mode") ?? "hybrid";
     const embedReady = embedStatus() === "ready";
     if (mode === "vector" && !embedReady) {
       console.error(`embedding runtime not ready (${embedStatus()}); run: arcadedb-skills embed install`);
       return 2;
     }
-    const limit = Number(flag2(rest, "limit") ?? 10);
-    const typesArg = flag2(rest, "types");
+    const limit = Number(flag3(rest, "limit") ?? 10);
+    const typesArg = flag3(rest, "types");
     const types = typesArg ? typesArg.split(",").map((t) => t.trim()).filter((t) => EMBEDDED_TYPES.includes(t)) : void 0;
     const cfg = resolveConfig();
     const client = new Client(toClientEnv(cfg));
     const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
     const embed = embedReady && mode !== "text" ? await loadEmbedder() : null;
     const num = (name, dflt) => {
-      const v = Number(flag2(rest, name));
+      const v = Number(flag3(rest, name));
       return Number.isFinite(v) ? v : dflt;
     };
     const hits = await hybridSearch(client, db, embed, query, {
       limit: Number.isFinite(limit) ? limit : 10,
       types,
-      repo: flag2(rest, "repo"),
+      repo: flag3(rest, "repo"),
       mode,
       context: num("context", 1),
-      related: num("related", 3)
+      related: num("related", 3),
+      includeSuperseded: rest.includes("--include-superseded"),
+      asOf: flag3(rest, "as-of")
     });
     if (!embedReady && mode === "hybrid") console.error("note: embedding runtime not ready, text-only results (arcadedb-skills embed install)");
     console.log(rest.includes("--json") ? JSON.stringify(hits, null, 2) : formatHits(hits));
     return 0;
+  }
+  if (cmd === "decisions") {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const sub = rest[0];
+    if (sub === "supersede") {
+      const [, newId, oldId] = rest;
+      if (!newId || !oldId) {
+        console.error("usage: arcadedb-skills decisions supersede <newId> <oldId> [--at <ISO>]");
+        return 1;
+      }
+      const ok = await supersedeDecision(client, db, newId, oldId, flag3(rest, "at"));
+      console.log(ok ? `${oldId} superseded by ${newId}` : "no such decisions (both ids must exist and differ)");
+      return ok ? 0 : 1;
+    }
+    if (sub === "reconcile") {
+      console.log(`closed ${await reconcileDecisions(client, db)} decision window(s)`);
+      return 0;
+    }
+    const list = await queryDecisions(client, db, { repo: flag3(rest, "repo"), includeSuperseded: rest.includes("--all"), asOf: flag3(rest, "as-of") });
+    if (rest.includes("--json")) {
+      console.log(JSON.stringify(list, null, 2));
+      return 0;
+    }
+    if (list.length === 0) {
+      console.log("no decisions");
+      return 0;
+    }
+    for (const d of list) {
+      const window = d.validTo ? `valid ${String(d.validFrom ?? d.decidedAt).slice(0, 10)} \u2192 ${String(d.validTo).slice(0, 10)} (superseded by ${d.supersededBy ?? "?"})` : `since ${String(d.validFrom ?? d.decidedAt).slice(0, 10)}`;
+      console.log(`- [${d.repo}] ${d.summary}
+    ${window}  id=${d.id}${d.rationale ? `
+    ${d.rationale.slice(0, 200)}` : ""}`);
+    }
+    return 0;
+  }
+  if (cmd === "rollup") {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg), { timeoutMs: 3e4 });
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const sub = rest[0] ?? "status";
+    if (sub === "status") {
+      const pending = await pendingSessions(client, db);
+      const done = await client.query(db, "sql", "SELECT count(*) AS n FROM Session WHERE summary IS NOT NULL AND summary <> ''");
+      const digests = await client.query(db, "sql", "SELECT count(*) AS n FROM Digest");
+      const real = pending.filter((x) => x.turnCount >= 4).length;
+      console.log(`rollup: ${cfg.rollup ? `on (${cfg.rollupModel} via ${cfg.rollupTransport})` : "off"}; ${done[0]?.n ?? 0} sessions summarised, ${digests[0]?.n ?? 0} weekly digests, ${real} pending (${pending.length - real} too short, skipped)`);
+      for (const p of pending.filter((x) => x.turnCount >= 4)) console.log(`  pending: ${p.id} ${p.repo ?? "?"} ${String(p.startedAt).slice(0, 16)} ${p.turnCount} turns, attempts=${p.attempts ?? 0}`);
+      return 0;
+    }
+    if (sub === "run") {
+      if (!cfg.rollup && !rest.includes("--force")) {
+        console.error("rollup is off (ARCADEDB_ROLLUP=on, or pass --force)");
+        return 1;
+      }
+      const stats = await runRollup({ client, db, model: cfg.rollupModel, llm: selectTransport(cfg.rollupTransport) });
+      console.log(JSON.stringify({ ...stats, costUsd: Number(stats.costUsd.toFixed(4)) }));
+      return stats.failed ? 1 : 0;
+    }
+    if (sub === "show") {
+      const id = rest[1];
+      if (!id) {
+        console.error("usage: arcadedb-skills rollup show <sessionDbId|digestId>");
+        return 1;
+      }
+      const s = await client.query(db, "sql", `SELECT title, summary, repo, startedAt, summaryModel FROM Session WHERE id = '${id.replace(/'/g, "")}'`);
+      if (s[0]) {
+        console.log(`# ${s[0].title ?? "(untitled)"}
+${s[0].repo} ${String(s[0].startedAt).slice(0, 16)} (${s[0].summaryModel ?? "?"})
+
+${s[0].summary || "(no summary yet)"}`);
+        return 0;
+      }
+      const g = await client.query(db, "sql", `SELECT title, text, week, repo FROM Digest WHERE id = '${id.replace(/'/g, "")}'`);
+      if (g[0]) {
+        console.log(`# ${g[0].title}
+${g[0].repo} ${g[0].week}
+
+${g[0].text}`);
+        return 0;
+      }
+      console.error("no session or digest with that id");
+      return 1;
+    }
+    console.error("usage: arcadedb-skills rollup run | status | show <id>");
+    return 1;
   }
   if (cmd === "refs") {
     const cfg = resolveConfig();
@@ -1703,7 +2451,7 @@ async function main2() {
       console.error("usage: arcadedb-skills refs backfill | <path|symbol|commit|ticket> [--limit <n>] [--json]");
       return 1;
     }
-    const lim = Number(flag2(rest, "limit") ?? 20);
+    const lim = Number(flag3(rest, "limit") ?? 20);
     const rows = await client.query(
       db,
       "cypher",
@@ -1766,8 +2514,8 @@ async function main2() {
       return 1;
     }
     const triples = [];
-    let sessionDbId = flag2(rest, "session");
-    let repo = flag2(rest, "repo") ?? null;
+    let sessionDbId = flag3(rest, "session");
+    let repo = flag3(rest, "repo") ?? null;
     for (const line of readFileSync7(auditPath, "utf8").split("\n")) {
       if (!line.trim()) continue;
       let entry;
@@ -1812,17 +2560,17 @@ async function main2() {
     return 0;
   }
   if (cmd === "extract-write") {
-    const rawFile = flag2(rest, "raw");
-    const sessionDbId = flag2(rest, "session");
-    const ccSession = flag2(rest, "cc-session");
-    const turns = flag2(rest, "turns");
-    const mode = (flag2(rest, "mode") ?? "live").toLowerCase();
+    const rawFile = flag3(rest, "raw");
+    const sessionDbId = flag3(rest, "session");
+    const ccSession = flag3(rest, "cc-session");
+    const turns = flag3(rest, "turns");
+    const mode = (flag3(rest, "mode") ?? "live").toLowerCase();
     if (!rawFile || !sessionDbId || !ccSession || !turns) {
       console.error("usage: arcadedb-skills extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun>");
       return 1;
     }
-    const lines = flag2(rest, "lines");
-    const turnArg = flag2(rest, "turn");
+    const lines = flag3(rest, "lines");
+    const turnArg = flag3(rest, "turn");
     const turn = turnArg === void 0 ? void 0 : Number(turnArg);
     const lineEnd = lines ? Number(lines.split("..")[1]) : void 0;
     const markIfRequested = () => {
@@ -1832,7 +2580,7 @@ async function main2() {
     };
     const raw = readFileSync7(rawFile, "utf8");
     const vocab = buildVocabSnapshot();
-    const repo = flag2(rest, "repo") ?? readSessionState(ccSession)?.repo ?? null;
+    const repo = flag3(rest, "repo") ?? readSessionState(ccSession)?.repo ?? null;
     const result = validateExtraction(raw, vocab);
     if (!result.ok) {
       const path = extractorErrorsPath(sessionDbId, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"));
@@ -1938,7 +2686,7 @@ ${live.errors.join("\n")}`);
   usage();
   return 1;
 }
-main2().then((c) => process.exit(c)).catch((e) => {
+main3().then((c) => process.exit(c)).catch((e) => {
   console.error(e);
   process.exit(1);
 });

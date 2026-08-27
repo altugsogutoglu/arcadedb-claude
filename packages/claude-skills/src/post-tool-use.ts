@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import { hooksDisabled } from "./hook-input.js";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir, projectsJsonPath, hookErrorLogPath } from "./env-paths.js";
 import { loadProjects, findProject } from "./project-map.js";
 
 async function main(): Promise<void> {
+  if (hooksDisabled()) return;
   const cwd = process.env["PWD"] ?? process.cwd();
   const map = loadProjects(projectsJsonPath(), logError);
   const match = findProject(map, cwd, null);

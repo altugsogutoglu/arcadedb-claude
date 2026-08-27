@@ -4,6 +4,14 @@ Keep a Changelog style. Newest on top. Since 0.8.0 there is one package: package
 
 ## [Unreleased]
 
+## arcadedb-claude-skills 0.11.0 - 2026-08-27
+
+### Added
+- Bi-temporal decisions. `:Decision` carries `validFrom`, `validTo`, `expiredAt`, `supersededBy` (Graphiti's model: world time and database time). `(new)-[:SUPERSEDES]->(old)` closes the old window instead of deleting anything: `record-decision --supersedes <id> [--valid-from <ISO>]`, `arcadedb-skills decisions supersede <newId> <oldId>`, and the extractor's `SUPERSEDES` triple all do it. Search hides superseded decisions by default; `--include-superseded` shows them marked, `--as-of <ISO>` gives the point-in-time view (decisions valid then, turns and summaries known then). `decisions list [--all] [--as-of]`, `decisions reconcile` (also run at SessionStart) backfills windows for edges written before 0.11.0.
+- Session rollup. A detached `rollup-runner` (spawned at SessionEnd and again at SessionStart, since SessionEnd hooks can be killed mid-flight) summarises every ended session with one small model call: `:Session.title` + `summary` (**Outcome / Changed / Decided / Open**), up to 5 new `:Decision`s `DURING` the session, and supersession of prior decisions the model was shown (candidates come from hybrid search over the session's own text). One call per repo per completed ISO week writes a `:Digest` (`COVERS` its sessions). Both are embedded and full-text indexed, and appear in `search` as `Summary` and `Digest`. Sessions under 4 turns are skipped; a bad answer is retried at most 3 times; abandoned sessions (no SessionEnd for 6 h) are closed first. `arcadedb-skills rollup run | status | show <id>`.
+- Model transport: `claude -p` with settings, tools, MCP and hooks switched off (about 250 input tokens of overhead; a typical 10-turn session costs $0.01-0.03 on haiku, long sessions are clipped to 24k characters), or `ARCADEDB_ROLLUP_TRANSPORT=api` with `ANTHROPIC_API_KEY`. `ARCADEDB_ROLLUP=on|off` (default on), `ARCADEDB_ROLLUP_MODEL` (default `haiku`). Every hook exits immediately when `ARCADEDB_HOOKS=off`, so the plugin never re-enters itself from that subprocess.
+- SessionStart banner shows superseded count and rollup state (`Rollup: on (haiku via claude -p, 2 sessions summarising in background)`).
+
 ## arcadedb-claude-skills 0.10.0 - 2026-08-27
 
 ### Added

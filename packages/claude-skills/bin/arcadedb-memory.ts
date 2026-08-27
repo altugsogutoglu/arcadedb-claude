@@ -91,9 +91,10 @@ async function main(): Promise<number> {
       const rationale = flag("rationale") ?? "";
       const repo = flag("repo") ?? "";
       const db = flag("db") ?? "claude_memory";
-      if (!summary || !repo) { console.error("usage: arcadedb-memory record-decision <summary> --rationale <text> --repo <name> [--session <id>] [--db claude_memory]"); return 1; }
+      if (!summary || !repo) { console.error("usage: arcadedb-memory record-decision <summary> --rationale <text> --repo <name> [--session <id>] [--supersedes <id,id>] [--valid-from <ISO>] [--db claude_memory]"); return 1; }
       const sessionId = flag("session") ?? process.env["ARCADEDB_SESSION_ID"];
-      const id = await recordDecision(client, db, { summary, rationale, repo, sessionId });
+      const supersedes = (flag("supersedes") ?? "").split(",").map(x => x.trim()).filter(Boolean);
+      const id = await recordDecision(client, db, { summary, rationale, repo, sessionId, supersedes, validFrom: flag("valid-from") });
       console.log(id);
       return 0;
     }

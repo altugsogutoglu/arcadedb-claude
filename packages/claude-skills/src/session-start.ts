@@ -9,6 +9,7 @@ import {
   findLatestSessionForRepo,
   linkFollows,
   applySchemas,
+  reconcileDecisions,
 } from "./agent-memory/index.js";
 import { ensureEnvFile, resolveConfig, toClientEnv } from "./config.js";
 import { resolveMemoryDb } from "./memory-db.js";
@@ -31,15 +32,17 @@ import {
 } from "./context-builder.js";
 import { writeSessionState, readSessionState } from "./session-state.js";
 import type { EmbedState } from "./context-builder.js";
-import { readHookInput } from "./hook-input.js";
+import { readHookInput, hooksDisabled } from "./hook-input.js";
 import { countTranscriptLines } from "./transcript-lines.js";
 import { decideIndexNeed, stalePath } from "./index-need.js";
 import { spawnIndexer } from "./index-spawn.js";
+import { spawnRollupRunner } from "./rollup-spawn.js";
 import { spawnEmbedRunner } from "./embed-spawn.js";
 import { embedStatus, spawnEmbedInstall } from "./embed.js";
 import { logCapture } from "./capture-log.js";
 
 async function main(): Promise<void> {
+  if (hooksDisabled()) return;
   const input = readHookInput();
   const cwd = input.cwd ?? process.env["PWD"] ?? process.cwd();
 
@@ -126,6 +129,15 @@ async function main(): Promise<void> {
     if (indexing) projectCtx.indexing = true;
   }
   const memoryCtx = await probeMemory(client, memoryDb);
+  await reconcileDecisions(client, memoryDb).catch(err => logError(err));
+  const supersededCount = await client.query<{ n: number }>(memoryDb, "sql", "SELECT count(*) AS n FROM Decision WHERE validTo IS NOT NULL").then(r => r[0]?.n ?? 0).catch(() => 0);
+  let rollupPending = 0;
+  if (cfg.rollup) {
+    rollupPending = await client.query<{ n: number }>(memoryDb, "sql", "SELECT count(*) AS n FROM Session WHERE endedAt IS NOT NULL AND summary IS NULL").then(r => r[0]?.n ?? 0).catch(() => 0);
+    // Catches the session that just ended (its SessionEnd hook may have been killed) and anything older.
+    const pid = spawnRollupRunner({ db: memoryDb });
+    if (pid) logCapture("rollup_spawned", { db: memoryDb, pid, pending: rollupPending });
+  }
 
   let embed: EmbedState = "off";
   if (cfg.embed) {
@@ -141,7 +153,7 @@ async function main(): Promise<void> {
     embed = status;
   }
 
-  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, capture: cfg.capture, embed, extractorMode: cfg.extractor, serverLine }) + "\n");
+  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, capture: cfg.capture, embed, extractorMode: cfg.extractor, serverLine, supersededCount, rollup: { on: cfg.rollup, model: cfg.rollupModel, transport: cfg.rollupTransport, pending: rollupPending } }) + "\n");
 
   // After context is printed, set up :Session lifecycle if we have a project.
   if (project) {

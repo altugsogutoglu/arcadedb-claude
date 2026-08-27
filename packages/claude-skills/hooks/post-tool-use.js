@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+// src/hook-input.ts
+function hooksDisabled(env = process.env) {
+  return (env["ARCADEDB_HOOKS"] ?? "").toLowerCase() === "off";
+}
+
 // src/post-tool-use.ts
 import { appendFileSync, existsSync as existsSync2, mkdirSync } from "node:fs";
 import { dirname, join as join2 } from "node:path";
@@ -69,6 +74,7 @@ function extractRemoteName(url) {
 
 // src/post-tool-use.ts
 async function main() {
+  if (hooksDisabled()) return;
   const cwd = process.env["PWD"] ?? process.cwd();
   const map = loadProjects(projectsJsonPath(), logError);
   const match = findProject(map, cwd, null);

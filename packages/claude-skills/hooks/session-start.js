@@ -134,7 +134,13 @@ var memorySchema = {
         { name: "startedAt", type: "DATETIME", notNull: true },
         { name: "endedAt", type: "DATETIME" },
         { name: "repo", type: "STRING" },
-        { name: "summary", type: "STRING" }
+        { name: "summary", type: "STRING", fullTextIndex: true },
+        { name: "title", type: "STRING" },
+        { name: "summarizedAt", type: "DATETIME" },
+        { name: "summaryModel", type: "STRING" },
+        { name: "turnCount", type: "INTEGER" },
+        { name: "rollupAttempts", type: "INTEGER" },
+        embedding
       ]
     },
     {
@@ -158,6 +164,12 @@ var memorySchema = {
         { name: "rationale", type: "STRING", fullTextIndex: true },
         { name: "decidedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
+        // Bi-temporal validity: world time [validFrom, validTo), database time expiredAt. A closed window is
+        // a superseded decision; nothing is deleted.
+        { name: "validFrom", type: "DATETIME" },
+        { name: "validTo", type: "DATETIME" },
+        { name: "expiredAt", type: "DATETIME" },
+        { name: "supersededBy", type: "STRING" },
         embedding
       ]
     },
@@ -193,6 +205,23 @@ var memorySchema = {
       ]
     },
     {
+      // Weekly rollup per repo: one summary over that week's session summaries and decisions.
+      name: "Digest",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "repo", type: "STRING", notNull: true },
+        { name: "week", type: "STRING", notNull: true },
+        { name: "periodStart", type: "DATETIME", notNull: true },
+        { name: "periodEnd", type: "DATETIME", notNull: true },
+        { name: "title", type: "STRING" },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "sessionCount", type: "INTEGER" },
+        { name: "createdAt", type: "DATETIME", notNull: true },
+        { name: "model", type: "STRING" },
+        embedding
+      ]
+    },
+    {
       // Something a Turn refers to by name: a file path, symbol, commit, ticket or URL.
       // Global on purpose (no repo): the same path or class name links turns across repos.
       name: "Ref",
@@ -206,6 +235,7 @@ var memorySchema = {
   ],
   edges: [
     { name: "MENTIONS" },
+    { name: "COVERS" },
     { name: "ABOUT" },
     { name: "DURING" },
     { name: "FOLLOWS" },
@@ -476,6 +506,25 @@ async function linkFollows(client, db, laterSessionId, earlierSessionId) {
   await client.execute(db, "cypher", cypher);
 }
 
+// src/agent-memory/memory/decisions.ts
+async function reconcileDecisions(client, db) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const rows = await client.execute(
+    db,
+    "cypher",
+    `MATCH (n:Decision)-[:SUPERSEDES]->(o:Decision)
+     WHERE o.validTo IS NULL
+     SET o.validTo = coalesce(n.validFrom, n.decidedAt),
+         o.expiredAt = datetime(${cypherStr2(now)}),
+         o.supersededBy = n.id
+     RETURN o.id AS id`
+  );
+  return rows.length;
+}
+function cypherStr2(s) {
+  return `'${s.replace(/'/g, "\\'")}'`;
+}
+
 // src/config.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, chmodSync } from "node:fs";
 import { dirname, join as join3 } from "node:path";
@@ -510,7 +559,10 @@ var DEFAULTS = {
   autoIndex: true,
   capture: true,
   embed: true,
-  extractor: "off"
+  extractor: "off",
+  rollup: true,
+  rollupModel: "haiku",
+  rollupTransport: "claude"
 };
 var KEYS = {
   httpUri: "ARCADEDB_HTTP_URI",
@@ -520,7 +572,10 @@ var KEYS = {
   autoIndex: "ARCADEDB_AUTO_INDEX",
   capture: "ARCADEDB_CAPTURE",
   embed: "ARCADEDB_EMBED",
-  extractor: "ARCADEDB_EXTRACTOR"
+  extractor: "ARCADEDB_EXTRACTOR",
+  rollup: "ARCADEDB_ROLLUP",
+  rollupModel: "ARCADEDB_ROLLUP_MODEL",
+  rollupTransport: "ARCADEDB_ROLLUP_TRANSPORT"
 };
 var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
@@ -580,6 +635,9 @@ function resolveConfig(opts = {}) {
   const embedRaw = pick(KEYS.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
   const extractorRaw = pick(KEYS.extractor, processEnv, file, DEFAULTS.extractor);
   const extractorMode = extractorRaw.value.toLowerCase();
+  const rollupRaw = pick(KEYS.rollup, processEnv, file, DEFAULTS.rollup ? "on" : "off");
+  const rollupModelRaw = pick(KEYS.rollupModel, processEnv, file, DEFAULTS.rollupModel);
+  const rollupTransportRaw = pick(KEYS.rollupTransport, processEnv, file, DEFAULTS.rollupTransport);
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
@@ -590,6 +648,9 @@ function resolveConfig(opts = {}) {
     embed: embedRaw.value.toLowerCase() !== "off",
     // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
     extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
+    rollup: rollupRaw.value.toLowerCase() !== "off",
+    rollupModel: rollupModelRaw.value,
+    rollupTransport: rollupTransportRaw.value.toLowerCase() === "api" ? "api" : "claude",
     envPath,
     sources: {
       httpUri: httpUri.source,
@@ -599,7 +660,10 @@ function resolveConfig(opts = {}) {
       autoIndex: autoIndexRaw.source,
       capture: captureRaw.source,
       embed: embedRaw.source,
-      extractor: extractorRaw.source
+      extractor: extractorRaw.source,
+      rollup: rollupRaw.source,
+      rollupModel: rollupModelRaw.source,
+      rollupTransport: rollupTransportRaw.source
     }
   };
 }
@@ -802,10 +866,12 @@ function buildContext(input) {
       lines.push(`  Schema: ${p.types.join(", ")}`);
     }
   }
+  const superseded = input.supersededCount ? `, ${input.supersededCount} superseded` : "";
   lines.push(
-    `  Memory DB: ${input.memory.db} (${input.memory.decisionCount} decisions, ${input.memory.insightCount} insights)`
+    `  Memory DB: ${input.memory.db} (${input.memory.decisionCount} decisions${superseded}, ${input.memory.insightCount} insights)`
   );
   lines.push(captureLine(input.capture ?? true, input.embed ?? "off"));
+  if (input.rollup) lines.push(rollupLine(input.rollup));
   lines.push(extractorLine(input.extractorMode));
   return lines.join("\n");
 }
@@ -813,6 +879,11 @@ function captureLine(capture, embed) {
   if (!capture) return "  Capture: off (ARCADEDB_CAPTURE=on to log every prompt and answer as :Turn)";
   const search = embed === "ready" ? "semantic search ready: arcadedb-skills search <query>" : embed === "installing" ? "embedding runtime installing in background, search available next session" : embed === "missing" ? "embedding runtime missing, run: arcadedb-skills embed install" : "embeddings off (ARCADEDB_EMBED=on for semantic search)";
   return `  Capture: on (every prompt/answer logged as :Turn, no LLM; ${search})`;
+}
+function rollupLine(r) {
+  if (!r.on) return "  Rollup: off (ARCADEDB_ROLLUP=on for one small LLM summary per ended session and a weekly digest per repo)";
+  const pending = r.pending > 0 ? `, ${r.pending} session${r.pending === 1 ? "" : "s"} summarising in background` : "";
+  return `  Rollup: on (${r.model} via ${r.transport === "api" ? "ANTHROPIC_API_KEY" : "claude -p"}, session summaries + weekly digests, searchable${pending})`;
 }
 function extractorLine(extractorMode) {
   const mode = (extractorMode ?? "off").toLowerCase();
@@ -878,6 +949,9 @@ function readHookInput() {
   } catch {
     return {};
   }
+}
+function hooksDisabled(env = process.env) {
+  return (env["ARCADEDB_HOOKS"] ?? "").toLowerCase() === "off";
 }
 
 // src/transcript-lines.ts
@@ -961,14 +1035,14 @@ function spawnIndexer(args) {
   }
 }
 
-// src/embed-spawn.ts
+// src/rollup-spawn.ts
 import { spawn as spawn2 } from "node:child_process";
 import { closeSync as closeSync2, openSync as openSync2 } from "node:fs";
 import { join as join7 } from "node:path";
-function spawnEmbedRunner(args) {
+function spawnRollupRunner(args) {
   try {
-    const runner = args.runner ?? runnerPath("embed-runner");
-    const log = openSync2(join7(configDir(), "embed.log"), "a");
+    const runner = args.runner ?? runnerPath("rollup-runner");
+    const log = openSync2(join7(configDir(), "rollup.log"), "a");
     const argv = runnerArgv(runner, ["--db", args.db]);
     const child = spawn2(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
     closeSync2(log);
@@ -979,20 +1053,38 @@ function spawnEmbedRunner(args) {
   }
 }
 
-// src/embed.ts
-import { existsSync as existsSync6, closeSync as closeSync3, openSync as openSync3, statSync, mkdirSync as mkdirSync4, writeFileSync as writeFileSync4, unlinkSync } from "node:fs";
+// src/embed-spawn.ts
 import { spawn as spawn3 } from "node:child_process";
+import { closeSync as closeSync3, openSync as openSync3 } from "node:fs";
 import { join as join8 } from "node:path";
+function spawnEmbedRunner(args) {
+  try {
+    const runner = args.runner ?? runnerPath("embed-runner");
+    const log = openSync3(join8(configDir(), "embed.log"), "a");
+    const argv = runnerArgv(runner, ["--db", args.db]);
+    const child = spawn3(process.execPath, argv, { detached: true, stdio: ["ignore", log, log], env: process.env });
+    closeSync3(log);
+    child.unref();
+    return child.pid ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// src/embed.ts
+import { existsSync as existsSync6, closeSync as closeSync4, openSync as openSync4, statSync, mkdirSync as mkdirSync4, writeFileSync as writeFileSync4, unlinkSync } from "node:fs";
+import { spawn as spawn4 } from "node:child_process";
+import { join as join9 } from "node:path";
 var EMBED_PACKAGE = "@xenova/transformers@2";
 var INSTALL_STALE_MS = 30 * 60 * 1e3;
 function embedDir() {
-  return join8(configDir(), "embed");
+  return join9(configDir(), "embed");
 }
 function embedInstallLock() {
-  return join8(embedDir(), "install.lock");
+  return join9(embedDir(), "install.lock");
 }
 function isEmbedInstalled(dir = embedDir()) {
-  return existsSync6(join8(dir, "node_modules", "@xenova", "transformers", "package.json"));
+  return existsSync6(join9(dir, "node_modules", "@xenova", "transformers", "package.json"));
 }
 function isEmbedInstalling(lock = embedInstallLock(), now = Date.now()) {
   try {
@@ -1003,27 +1095,27 @@ function isEmbedInstalling(lock = embedInstallLock(), now = Date.now()) {
 }
 function embedStatus(dir = embedDir()) {
   if (isEmbedInstalled(dir)) return "ready";
-  return isEmbedInstalling(join8(dir, "install.lock")) ? "installing" : "missing";
+  return isEmbedInstalling(join9(dir, "install.lock")) ? "installing" : "missing";
 }
 function spawnEmbedInstall(dir = embedDir()) {
   if (isEmbedInstalled(dir)) return null;
-  const lock = join8(dir, "install.lock");
+  const lock = join9(dir, "install.lock");
   if (isEmbedInstalling(lock)) return null;
   try {
     mkdirSync4(dir, { recursive: true });
-    if (!existsSync6(join8(dir, "package.json"))) {
-      writeFileSync4(join8(dir, "package.json"), JSON.stringify({ name: "arcadedb-embed", private: true }, null, 2) + "\n");
+    if (!existsSync6(join9(dir, "package.json"))) {
+      writeFileSync4(join9(dir, "package.json"), JSON.stringify({ name: "arcadedb-embed", private: true }, null, 2) + "\n");
     }
     writeFileSync4(lock, String(process.pid));
-    const log = openSync3(join8(dir, "install.log"), "a");
+    const log = openSync4(join9(dir, "install.log"), "a");
     const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-    const child = spawn3(npm, ["install", "--no-audit", "--no-fund", "--loglevel=error", EMBED_PACKAGE], {
+    const child = spawn4(npm, ["install", "--no-audit", "--no-fund", "--loglevel=error", EMBED_PACKAGE], {
       cwd: dir,
       detached: true,
       stdio: ["ignore", log, log],
       env: process.env
     });
-    closeSync3(log);
+    closeSync4(log);
     child.on("exit", () => {
       try {
         unlinkSync(lock);
@@ -1051,6 +1143,7 @@ function logCapture(event, fields = {}) {
 
 // src/session-start.ts
 async function main() {
+  if (hooksDisabled()) return;
   const input = readHookInput();
   const cwd = input.cwd ?? process.env["PWD"] ?? process.cwd();
   ensureEnvFile();
@@ -1126,6 +1219,14 @@ async function main() {
     if (indexing) projectCtx.indexing = true;
   }
   const memoryCtx = await probeMemory(client, memoryDb);
+  await reconcileDecisions(client, memoryDb).catch((err) => logError(err));
+  const supersededCount = await client.query(memoryDb, "sql", "SELECT count(*) AS n FROM Decision WHERE validTo IS NOT NULL").then((r) => r[0]?.n ?? 0).catch(() => 0);
+  let rollupPending = 0;
+  if (cfg.rollup) {
+    rollupPending = await client.query(memoryDb, "sql", "SELECT count(*) AS n FROM Session WHERE endedAt IS NOT NULL AND summary IS NULL").then((r) => r[0]?.n ?? 0).catch(() => 0);
+    const pid = spawnRollupRunner({ db: memoryDb });
+    if (pid) logCapture("rollup_spawned", { db: memoryDb, pid, pending: rollupPending });
+  }
   let embed = "off";
   if (cfg.embed) {
     let status = embedStatus();
@@ -1138,7 +1239,7 @@ async function main() {
     }
     embed = status;
   }
-  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, capture: cfg.capture, embed, extractorMode: cfg.extractor, serverLine }) + "\n");
+  process.stdout.write(buildContext({ project: projectCtx, memory: memoryCtx, capture: cfg.capture, embed, extractorMode: cfg.extractor, serverLine, supersededCount, rollup: { on: cfg.rollup, model: cfg.rollupModel, transport: cfg.rollupTransport, pending: rollupPending } }) + "\n");
   if (project) {
     const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"] ?? `local-${randomUUID2()}`;
     await tryStartSession(client, memoryDb, project.key, cwd, claudeCodeSessionId, input.transcript_path).catch((err) => logError(err));

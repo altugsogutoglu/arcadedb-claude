@@ -25,6 +25,9 @@ export interface ContextInput {
   embed?: EmbedState;
   extractorMode?: string;
   serverLine?: string;
+  rollup?: { on: boolean; model: string; transport: string; pending: number };
+  /** Decisions whose validity window is closed. */
+  supersededCount?: number;
 }
 
 export function buildContext(input: ContextInput): string {
@@ -50,10 +53,12 @@ export function buildContext(input: ContextInput): string {
       lines.push(`  Schema: ${p.types.join(", ")}`);
     }
   }
+  const superseded = input.supersededCount ? `, ${input.supersededCount} superseded` : "";
   lines.push(
-    `  Memory DB: ${input.memory.db} (${input.memory.decisionCount} decisions, ${input.memory.insightCount} insights)`
+    `  Memory DB: ${input.memory.db} (${input.memory.decisionCount} decisions${superseded}, ${input.memory.insightCount} insights)`
   );
   lines.push(captureLine(input.capture ?? true, input.embed ?? "off"));
+  if (input.rollup) lines.push(rollupLine(input.rollup));
   lines.push(extractorLine(input.extractorMode));
   return lines.join("\n");
 }
@@ -66,6 +71,12 @@ function captureLine(capture: boolean, embed: EmbedState): string {
     : embed === "missing" ? "embedding runtime missing, run: arcadedb-skills embed install"
     : "embeddings off (ARCADEDB_EMBED=on for semantic search)";
   return `  Capture: on (every prompt/answer logged as :Turn, no LLM; ${search})`;
+}
+
+function rollupLine(r: { on: boolean; model: string; transport: string; pending: number }): string {
+  if (!r.on) return "  Rollup: off (ARCADEDB_ROLLUP=on for one small LLM summary per ended session and a weekly digest per repo)";
+  const pending = r.pending > 0 ? `, ${r.pending} session${r.pending === 1 ? "" : "s"} summarising in background` : "";
+  return `  Rollup: on (${r.model} via ${r.transport === "api" ? "ANTHROPIC_API_KEY" : "claude -p"}, session summaries + weekly digests, searchable${pending})`;
 }
 
 function extractorLine(extractorMode: string | undefined): string {

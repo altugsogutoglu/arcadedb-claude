@@ -24,6 +24,9 @@ export interface SearchHit {
   at: string | null;
   sessionId: string | null;
   rid: string;
+  /** Decision hits only: the window is closed, a newer decision replaced it. */
+  superseded?: boolean;
+  validTo?: string | null;
   /** Turn hits only: the turns just before and after in the same session. */
   context?: { before: TurnBrief[]; after: TurnBrief[] };
   /** Turn hits only: turns from other sessions naming the same file, symbol, commit or ticket. */
@@ -39,6 +42,10 @@ export interface SearchOptions {
   context?: number;
   /** Related turns (shared refs) per Turn hit; 0 disables. */
   related?: number;
+  /** Include decisions whose validity window is closed (superseded). Default false. */
+  includeSuperseded?: boolean;
+  /** Point-in-time view: only what was known and valid at this ISO instant. */
+  asOf?: string;
 }
 
 const AT_EXPR: Record<EmbeddedType, string> = {
@@ -47,7 +54,12 @@ const AT_EXPR: Record<EmbeddedType, string> = {
   Insight: "createdAt",
   Question: "askedAt",
   Answer: "answeredAt",
+  Session: "summarizedAt",
+  Digest: "createdAt",
 };
+
+/** What the type is called in output: a summarised :Session reads as a Summary. */
+const DISPLAY: Partial<Record<EmbeddedType, string>> = { Session: "Summary" };
 
 /** Properties with a FULL_TEXT index, per type (see schemas/memory.ts). */
 const TEXT_INDEXED: Record<EmbeddedType, string[]> = {
@@ -56,6 +68,8 @@ const TEXT_INDEXED: Record<EmbeddedType, string[]> = {
   Insight: ["topic", "text"],
   Question: ["text"],
   Answer: ["text"],
+  Session: ["summary"],
+  Digest: ["text"],
 };
 
 /** Standard RRF constant: 60 flattens the top of each list so no single retriever dominates. */
@@ -98,6 +112,20 @@ function sqlStr(s: string): string {
 }
 
 /**
+ * Bi-temporal scoping. Default: superseded decisions are hidden. `asOf`: decisions valid at that instant,
+ * everything else created at or before it.
+ */
+export function temporalClause(type: EmbeddedType, opts: { includeSuperseded?: boolean; asOf?: string }): string {
+  if (opts.asOf) {
+    const t = sqlStr(opts.asOf);
+    if (type === "Decision") return ` AND coalesce(validFrom, decidedAt) <= ${t} AND (validTo IS NULL OR validTo > ${t})`;
+    return ` AND ${AT_EXPR[type]} <= ${t}`;
+  }
+  if (type === "Decision" && !opts.includeSuperseded) return " AND validTo IS NULL";
+  return "";
+}
+
+/**
  * Hybrid search: vector similarity, full-text and ref lookup each rank candidates, RRF fuses them,
  * the top hits are hydrated and (for Turns) expanded with session context and related turns.
  * Pass `embed: null` (or mode "text") when the embedding runtime is not available.
@@ -116,6 +144,7 @@ export async function hybridSearch(
   const useText = mode !== "vector";
   const candidates = limit * CANDIDATE_FACTOR;
   const repoClause = opts.repo ? ` AND repo = ${sqlStr(opts.repo)}` : "";
+  const scope = (type: EmbeddedType): string => repoClause + temporalClause(type, opts);
 
   let vecLiteral: string | null = null;
   if (useVector) {
@@ -136,14 +165,14 @@ export async function hybridSearch(
     if (vecLiteral) {
       const rows = await client.query<{ rid: string }>(db, "sql",
         `SELECT @rid AS rid, vectorCosineSimilarity(embedding, ${vecLiteral}) AS score
-         FROM ${type} WHERE embedding IS NOT NULL${repoClause} ORDER BY score DESC LIMIT ${candidates}`);
+         FROM ${type} WHERE embedding IS NOT NULL${scope(type)} ORDER BY score DESC LIMIT ${candidates}`);
       (lists["vector"] ??= []).push(...remember(type, rows.map(r => r.rid)));
     }
     if (lucene) {
       for (const prop of TEXT_INDEXED[type]) {
         const rows = await client.query<{ rid: string }>(db, "sql",
           `SELECT @rid AS rid, $score AS score FROM ${type}
-           WHERE SEARCH_INDEX(${sqlStr(`${type}[${prop}]`)}, ${sqlStr(lucene)}) = true${repoClause}
+           WHERE SEARCH_INDEX(${sqlStr(`${type}[${prop}]`)}, ${sqlStr(lucene)}) = true${scope(type)}
            ORDER BY score DESC LIMIT ${candidates}`).catch(() => [] as { rid: string }[]);
         (lists["text"] ??= []).push(...remember(type, rows.map(r => r.rid)));
       }
@@ -152,7 +181,7 @@ export async function hybridSearch(
   if (useText && tokens.length > 0 && types.includes("Turn")) {
     const rows = await client.query<{ rid: string }>(db, "sql",
       `SELECT @rid AS rid FROM (SELECT expand(in('MENTIONS')) FROM Ref WHERE valueLc IN [${tokens.map(sqlStr).join(",")}])
-       WHERE @type = 'Turn'${repoClause} LIMIT ${candidates}`).catch(() => [] as { rid: string }[]);
+       WHERE @type = 'Turn'${scope("Turn")} LIMIT ${candidates}`).catch(() => [] as { rid: string }[]);
     (lists["ref"] ??= []).push(...remember("Turn", rows.map(r => r.rid)));
   }
 
@@ -181,12 +210,16 @@ async function hydrate(client: Client, db: string, items: { rid: string; type: E
   for (const it of items) (byType.get(it.type) ?? byType.set(it.type, []).get(it.type)!).push(it);
   const out = new Map<string, SearchHit>();
   for (const [type, group] of byType) {
-    const rows = await client.query<{ rid: string; body: string; repo?: string; at?: string; sessionId?: string; idx?: number }>(db, "sql",
-      `SELECT @rid AS rid, ${TEXT_EXPR[type]} AS body, repo, ${AT_EXPR[type]} AS at, ${type === "Turn" ? "sessionId, idx" : "null AS sessionId, null AS idx"}
+    const rows = await client.query<{ rid: string; body: string; repo?: string; at?: string; sessionId?: string; idx?: number; validTo?: string | null }>(db, "sql",
+      `SELECT @rid AS rid, ${TEXT_EXPR[type]} AS body, repo, ${AT_EXPR[type]} AS at, ${type === "Turn" ? "sessionId, idx" : type === "Session" ? "id AS sessionId, null AS idx" : "null AS sessionId, null AS idx"},
+              ${type === "Decision" ? "validTo" : "null AS validTo"}
        FROM ${type} WHERE @rid IN [${group.map(g => g.rid).join(",")}]`);
     for (const r of rows) {
       const it = group.find(g => g.rid === r.rid)!;
-      out.set(r.rid, { type, score: it.score, via: it.via, text: r.body ?? "", repo: r.repo ?? null, at: r.at ?? null, sessionId: r.sessionId ?? null, rid: r.rid, ...(r.idx != null ? { idx: r.idx } : {}) } as SearchHit & { idx?: number });
+      const hit: SearchHit & { idx?: number } = { type, score: it.score, via: it.via, text: r.body ?? "", repo: r.repo ?? null, at: r.at ?? null, sessionId: r.sessionId ?? null, rid: r.rid };
+      if (r.idx != null) hit.idx = r.idx;
+      if (type === "Decision" && r.validTo) { hit.superseded = true; hit.validTo = String(r.validTo); }
+      out.set(r.rid, hit);
     }
   }
   return items.map(i => out.get(i.rid)).filter((h): h is SearchHit => !!h);
@@ -224,7 +257,7 @@ export function formatHits(hits: SearchHit[], maxChars = 400): string {
   const clip = (t: string, n: number): string => (t.length > n ? t.slice(0, n) + "..." : t).replace(/\n/g, " ");
   return hits.map((h, i) => {
     const text = h.text.length > maxChars ? h.text.slice(0, maxChars) + "..." : h.text;
-    const meta = [h.type, h.repo, h.at ? h.at.slice(0, 16) : null, h.via.join("+")].filter(Boolean).join(" | ");
+    const meta = [DISPLAY[h.type] ?? h.type, h.repo, h.at ? h.at.slice(0, 16) : null, h.via.join("+"), h.superseded ? `superseded ${String(h.validTo).slice(0, 10)}` : null].filter(Boolean).join(" | ");
     const lines = [`${i + 1}. [${h.score.toFixed(3)}] ${meta}`, `   ${text.replace(/\n/g, "\n   ")}`];
     for (const b of h.context?.before ?? []) lines.push(`   ↑ ${b.role ?? "?"}: ${clip(b.text, 120)}`);
     for (const a of h.context?.after ?? []) lines.push(`   ↓ ${a.role ?? "?"}: ${clip(a.text, 120)}`);

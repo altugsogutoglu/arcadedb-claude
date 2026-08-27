@@ -19,6 +19,9 @@ import { embedStatus, embedDir, loadEmbedder, spawnEmbedInstall } from "../src/e
 import { embedPending } from "../src/embed-runner.js";
 import { hybridSearch, formatHits, type SearchMode } from "../src/search.js";
 import { backfillRefs } from "../src/turn-capture.js";
+import { queryDecisions, supersedeDecision, reconcileDecisions } from "../src/agent-memory/index.js";
+import { runRollup, pendingSessions } from "../src/rollup-runner.js";
+import { selectTransport } from "../src/rollup-llm.js";
 import { backfillFullText } from "../src/agent-memory/migrations/fulltext.js";
 import { EMBEDDED_TYPES, type EmbeddedType } from "../src/agent-memory/index.js";
 
@@ -35,6 +38,9 @@ function usage(): void {
   console.error("  extract-write --raw <file> --session <sessionDbId> --cc-session <id> --turns <N..M> --mode <live|dryrun> [--lines <A..B>] [--turn <n>] [--repo <name>]");
   console.error(`  config show | set <${SET_KEY_NAMES}> <value> | test | forget <key> [--drop-db] | index [<key>]`);
   console.error("  search <query> [--limit <n>] [--types Turn,Decision,...] [--repo <name>] [--mode hybrid|vector|text] [--context <n>] [--related <n>] [--json]");
+  console.error("      ... [--as-of <ISO>] [--include-superseded]   point-in-time view | show decisions with a closed validity window");
+  console.error("  decisions list [--repo <name>] [--all] [--as-of <ISO>] | supersede <newId> <oldId> [--at <ISO>] | reconcile");
+  console.error("  rollup run | status | show <sessionDbId>   summarise ended sessions + weekly digests now | pending count | print a summary");
   console.error("  search reindex                             re-index existing rows for full-text search (one-off after upgrade)");
   console.error("  refs backfill | <value>                    link :Ref nodes for old turns | list turns naming a path/symbol/commit/ticket");
   console.error("  embed install | status | run              manage the local embedding runtime");
@@ -79,7 +85,7 @@ async function main(): Promise<number> {
   }
 
   if (cmd === "search") {
-    const VALUE_FLAGS = new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related"]);
+    const VALUE_FLAGS = new Set(["--limit", "--types", "--repo", "--mode", "--context", "--related", "--as-of"]);
     const positional = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1]!)));
     const query = positional.join(" ").trim();
     if (!query) {
@@ -105,10 +111,71 @@ async function main(): Promise<number> {
     const hits = await hybridSearch(client, db, embed, query, {
       limit: Number.isFinite(limit) ? limit : 10, types, repo: flag(rest, "repo"), mode,
       context: num("context", 1), related: num("related", 3),
+      includeSuperseded: rest.includes("--include-superseded"), asOf: flag(rest, "as-of"),
     });
     if (!embedReady && mode === "hybrid") console.error("note: embedding runtime not ready, text-only results (arcadedb-skills embed install)");
     console.log(rest.includes("--json") ? JSON.stringify(hits, null, 2) : formatHits(hits));
     return 0;
+  }
+
+  if (cmd === "decisions") {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg));
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const sub = rest[0];
+    if (sub === "supersede") {
+      const [, newId, oldId] = rest;
+      if (!newId || !oldId) { console.error("usage: arcadedb-skills decisions supersede <newId> <oldId> [--at <ISO>]"); return 1; }
+      const ok = await supersedeDecision(client, db, newId, oldId, flag(rest, "at"));
+      console.log(ok ? `${oldId} superseded by ${newId}` : "no such decisions (both ids must exist and differ)");
+      return ok ? 0 : 1;
+    }
+    if (sub === "reconcile") {
+      console.log(`closed ${await reconcileDecisions(client, db)} decision window(s)`);
+      return 0;
+    }
+    const list = await queryDecisions(client, db, { repo: flag(rest, "repo"), includeSuperseded: rest.includes("--all"), asOf: flag(rest, "as-of") });
+    if (rest.includes("--json")) { console.log(JSON.stringify(list, null, 2)); return 0; }
+    if (list.length === 0) { console.log("no decisions"); return 0; }
+    for (const d of list) {
+      const window = d.validTo ? `valid ${String(d.validFrom ?? d.decidedAt).slice(0, 10)} → ${String(d.validTo).slice(0, 10)} (superseded by ${d.supersededBy ?? "?"})` : `since ${String(d.validFrom ?? d.decidedAt).slice(0, 10)}`;
+      console.log(`- [${d.repo}] ${d.summary}\n    ${window}  id=${d.id}${d.rationale ? `\n    ${d.rationale.slice(0, 200)}` : ""}`);
+    }
+    return 0;
+  }
+
+  if (cmd === "rollup") {
+    const cfg = resolveConfig();
+    const client = new Client(toClientEnv(cfg), { timeoutMs: 30_000 });
+    const db = resolveMemoryDb(cfg, loadProjects(projectsJsonPath()));
+    const sub = rest[0] ?? "status";
+    if (sub === "status") {
+      const pending = await pendingSessions(client, db);
+      const done = await client.query<{ n: number }>(db, "sql", "SELECT count(*) AS n FROM Session WHERE summary IS NOT NULL AND summary <> ''");
+      const digests = await client.query<{ n: number }>(db, "sql", "SELECT count(*) AS n FROM Digest");
+      const real = pending.filter(x => x.turnCount >= 4).length;
+      console.log(`rollup: ${cfg.rollup ? `on (${cfg.rollupModel} via ${cfg.rollupTransport})` : "off"}; ${done[0]?.n ?? 0} sessions summarised, ${digests[0]?.n ?? 0} weekly digests, ${real} pending (${pending.length - real} too short, skipped)`);
+      for (const p of pending.filter(x => x.turnCount >= 4)) console.log(`  pending: ${p.id} ${p.repo ?? "?"} ${String(p.startedAt).slice(0, 16)} ${p.turnCount} turns, attempts=${p.attempts ?? 0}`);
+      return 0;
+    }
+    if (sub === "run") {
+      if (!cfg.rollup && !rest.includes("--force")) { console.error("rollup is off (ARCADEDB_ROLLUP=on, or pass --force)"); return 1; }
+      const stats = await runRollup({ client, db, model: cfg.rollupModel, llm: selectTransport(cfg.rollupTransport) });
+      console.log(JSON.stringify({ ...stats, costUsd: Number(stats.costUsd.toFixed(4)) }));
+      return stats.failed ? 1 : 0;
+    }
+    if (sub === "show") {
+      const id = rest[1];
+      if (!id) { console.error("usage: arcadedb-skills rollup show <sessionDbId|digestId>"); return 1; }
+      const s = await client.query<{ title: string; summary: string; repo: string; startedAt: string; summaryModel: string }>(db, "sql", `SELECT title, summary, repo, startedAt, summaryModel FROM Session WHERE id = '${id.replace(/'/g, "")}'`);
+      if (s[0]) { console.log(`# ${s[0].title ?? "(untitled)"}\n${s[0].repo} ${String(s[0].startedAt).slice(0, 16)} (${s[0].summaryModel ?? "?"})\n\n${s[0].summary || "(no summary yet)"}`); return 0; }
+      const g = await client.query<{ title: string; text: string; week: string; repo: string }>(db, "sql", `SELECT title, text, week, repo FROM Digest WHERE id = '${id.replace(/'/g, "")}'`);
+      if (g[0]) { console.log(`# ${g[0].title}\n${g[0].repo} ${g[0].week}\n\n${g[0].text}`); return 0; }
+      console.error("no session or digest with that id");
+      return 1;
+    }
+    console.error("usage: arcadedb-skills rollup run | status | show <id>");
+    return 1;
   }
 
   if (cmd === "refs") {

@@ -6,7 +6,7 @@ import { Client } from "./agent-memory/index.js";
 import { hookErrorLogPath, projectsJsonPath } from "./env-paths.js";
 import { incrementTurn, markCaptured, markExtractInFlight, type SessionState } from "./session-state.js";
 import { shouldExtract } from "./rate-limit.js";
-import { readHookInput, type HookInput } from "./hook-input.js";
+import { readHookInput, hooksDisabled, type HookInput } from "./hook-input.js";
 import { logCapture } from "./capture-log.js";
 import { countTranscriptLines } from "./transcript-lines.js";
 import { parseTranscriptTurns } from "./transcript-turns.js";
@@ -29,6 +29,7 @@ const DEFAULT_INTERVAL_MS = envInt("ARCADEDB_EXTRACT_INTERVAL_MS", 15 * 60 * 100
 export const EXTRACT_IN_FLIGHT_MAX_MS = 10 * 60 * 1000;
 
 async function main(): Promise<void> {
+  if (hooksDisabled()) return;
   const input = readHookInput();
   if (input.stop_hook_active) { logCapture("skip", { reason: "stop_hook_active", session: input.session_id }); return; }
   if (!input.session_id) { logCapture("skip", { reason: "no_session_id" }); return; }

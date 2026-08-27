@@ -20,6 +20,7 @@ Run a query against the ArcadeDB graph. Accepts either a natural-language questi
    node ${CLAUDE_PLUGIN_ROOT}/hooks/cli.js refs HeisterkampClient
    ```
    Without the embedding runtime, search still answers from full-text and refs (a note goes to stderr).
+   For "what happened last week / in that session" questions add `--types Session,Digest`; for "what did we believe on <date>" add `--as-of <ISO>`; for "did we ever decide otherwise" add `--include-superseded`.
 3. Otherwise, translate the question to Cypher using the schema cheat-sheet from `arcadedb-graph` skill.
 4. Determine the target DB:
    - For code-intelligence questions ("what calls", "what imports", "files in"), use the project DB from SessionStart context.

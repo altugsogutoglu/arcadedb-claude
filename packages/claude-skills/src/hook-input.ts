@@ -38,3 +38,8 @@ export function readHookInput(): HookInput {
     return {};
   }
 }
+
+/** True inside processes the plugin itself spawns (rollup LLM calls): every hook must exit at once. */
+export function hooksDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env["ARCADEDB_HOOKS"] ?? "").toLowerCase() === "off";
+}

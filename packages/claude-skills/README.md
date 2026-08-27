@@ -88,6 +88,32 @@ arcadedb-skills extract-replay <sessionDbId> [--repo X]          # re-write an a
 
 Without the embedding runtime, `search` runs text + ref only and says so on stderr.
 
+### Session rollup and weekly digests (on by default, one small model call each)
+
+When a session ends, a detached runner summarises it with one `claude -p` call on `haiku` (settings, tools, MCP and hooks off: ~250 tokens of overhead; a typical 10-turn session costs $0.01-0.03, long transcripts are clipped to 24k characters): a title, a markdown summary (**Outcome / Changed / Decided / Open**), up to five durable decisions, and a verdict on which earlier decisions of that repo the session replaced. Once a week per repo is complete, one more call writes a `:Digest` over that week's session summaries. Both are embedded and full-text indexed, so `search` returns them as `Summary` and `Digest` next to raw turns. This is the GraphRAG "community summary" idea done incrementally: never a recompute over the whole graph, cost proportional to what you actually did.
+
+```bash
+arcadedb-skills rollup status                  # summarised / digests / pending
+arcadedb-skills rollup run                     # do it now instead of waiting for the next SessionEnd/SessionStart
+arcadedb-skills rollup show <sessionDbId>      # print one summary (or a digest id like transprt.net:2026-W35)
+```
+
+`ARCADEDB_ROLLUP=off` disables it, `ARCADEDB_ROLLUP_MODEL=sonnet` changes the model, `ARCADEDB_ROLLUP_TRANSPORT=api` uses `ANTHROPIC_API_KEY` instead of your Claude Code login.
+
+### Decisions are bi-temporal
+
+A `:Decision` has a validity window (`validFrom`, `validTo`) and a database timestamp for when it was invalidated (`expiredAt`). A newer decision that `SUPERSEDES` an older one closes the old window; nothing is deleted, so history stays queryable:
+
+```bash
+arcadedb-memory record-decision "No default Heisterkamp URL" --rationale "..." --repo transprt.net --supersedes <oldId>
+arcadedb-skills decisions list --repo transprt.net            # current decisions only
+arcadedb-skills decisions list --all                          # with closed windows and who superseded them
+arcadedb-skills search "heisterkamp api" --as-of 2026-07-01   # what was true in July
+arcadedb-skills search "heisterkamp api" --include-superseded # current ranking, old ones marked [superseded]
+```
+
+The rollup runner and the extractor's `SUPERSEDES` triple use the same mechanism.
+
 `/graph-query` uses this for fuzzy questions ("what did we say about X").
 
 ### LLM extractor (off by default)
@@ -107,6 +133,9 @@ Environment variables:
 | Variable | Default | Purpose |
 |---|---|---|
 | `ARCADEDB_CAPTURE` | `on` | Raw `:Turn` capture on every Stop. |
+| `ARCADEDB_ROLLUP` | `on` | Session summaries + weekly digests via one small model call each. |
+| `ARCADEDB_ROLLUP_MODEL` | `haiku` | Model for the rollup call (`claude -p` alias or full id). |
+| `ARCADEDB_ROLLUP_TRANSPORT` | `claude` | `claude` (your Claude Code login) or `api` (`ANTHROPIC_API_KEY`). |
 | `ARCADEDB_EMBED` | `on` | Local embeddings + background runtime install. |
 | `ARCADEDB_EXTRACTOR` | `off` | `live` writes triples to the graph, `dryrun` writes the JSONL audit only. |
 | `ARCADEDB_EXTRACT_TURNS` | `10` | Extractor: trip after this many turns since last extract. |

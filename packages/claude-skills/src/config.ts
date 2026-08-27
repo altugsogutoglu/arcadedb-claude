@@ -16,6 +16,12 @@ export interface ResolvedConfig {
   embed: boolean;
   /** LLM extractor: off (default) | live | dryrun. Costs tokens per run. */
   extractor: "off" | "live" | "dryrun";
+  /** Session rollup: one small LLM call per ended session and per repo-week. */
+  rollup: boolean;
+  /** Model for the rollup call (claude -p alias or full id). */
+  rollupModel: string;
+  /** How the rollup reaches a model: the user's Claude Code login, or ANTHROPIC_API_KEY. */
+  rollupTransport: "claude" | "api";
   envPath: string;
   sources: {
     httpUri: ConfigSource;
@@ -26,6 +32,9 @@ export interface ResolvedConfig {
     capture: ConfigSource;
     embed: ConfigSource;
     extractor: ConfigSource;
+    rollup: ConfigSource;
+    rollupModel: ConfigSource;
+    rollupTransport: ConfigSource;
   };
 }
 
@@ -37,6 +46,9 @@ export const DEFAULTS = {
   capture: true,
   embed: true,
   extractor: "off",
+  rollup: true,
+  rollupModel: "haiku",
+  rollupTransport: "claude",
 } as const;
 
 const KEYS = {
@@ -48,6 +60,9 @@ const KEYS = {
   capture: "ARCADEDB_CAPTURE",
   embed: "ARCADEDB_EMBED",
   extractor: "ARCADEDB_EXTRACTOR",
+  rollup: "ARCADEDB_ROLLUP",
+  rollupModel: "ARCADEDB_ROLLUP_MODEL",
+  rollupTransport: "ARCADEDB_ROLLUP_TRANSPORT",
 } as const;
 
 export const DB_NAME = /^[a-z][a-z0-9_]*$/;
@@ -120,6 +135,9 @@ export function resolveConfig(opts: { envPath?: string; processEnv?: NodeJS.Proc
   const embedRaw = pick(KEYS.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
   const extractorRaw = pick(KEYS.extractor, processEnv, file, DEFAULTS.extractor);
   const extractorMode = extractorRaw.value.toLowerCase();
+  const rollupRaw = pick(KEYS.rollup, processEnv, file, DEFAULTS.rollup ? "on" : "off");
+  const rollupModelRaw = pick(KEYS.rollupModel, processEnv, file, DEFAULTS.rollupModel);
+  const rollupTransportRaw = pick(KEYS.rollupTransport, processEnv, file, DEFAULTS.rollupTransport);
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
@@ -130,6 +148,9 @@ export function resolveConfig(opts: { envPath?: string; processEnv?: NodeJS.Proc
     embed: embedRaw.value.toLowerCase() !== "off",
     // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
     extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
+    rollup: rollupRaw.value.toLowerCase() !== "off",
+    rollupModel: rollupModelRaw.value,
+    rollupTransport: rollupTransportRaw.value.toLowerCase() === "api" ? "api" : "claude",
     envPath,
     sources: {
       httpUri: httpUri.source,
@@ -140,6 +161,9 @@ export function resolveConfig(opts: { envPath?: string; processEnv?: NodeJS.Proc
       capture: captureRaw.source,
       embed: embedRaw.source,
       extractor: extractorRaw.source,
+      rollup: rollupRaw.source,
+      rollupModel: rollupModelRaw.source,
+      rollupTransport: rollupTransportRaw.source,
     },
   };
 }

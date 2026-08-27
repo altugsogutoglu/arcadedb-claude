@@ -14,6 +14,8 @@ Use this command to record a decision worth remembering across sessions.
 - `--rationale <text>` (required): why this decision was made.
 - `--repo <name>` (optional): which project this is about. Defaults to the project from SessionStart context, or "general" if unknown.
 - `--db <name>` (optional): which memory DB. Defaults to `claude_memory`.
+- `--supersedes <id[,id]>` (optional): earlier decision(s) this one replaces. Their validity window closes at this decision's `--valid-from` (default now); they stay in the graph for `search --as-of`.
+- `--valid-from <ISO>` (optional): when the decision started to hold, if earlier than now.
 - `--session <id>` (optional): the ArcadeDB `:Session.id` to attach the decision to via `:DURING`. **The recipe auto-fills this** by reading `sessionDbId` from `~/.config/arcadedb/sessions/$CLAUDE_SESSION_ID.json` (the state file written by the SessionStart hook). As a secondary fallback, the `arcadedb-memory` CLI also honors the `ARCADEDB_SESSION_ID` env var if neither `--session` nor the state file is available.
 
 ## Behavior
@@ -36,6 +38,7 @@ arcadedb-memory record-decision "${1:-$ARGUMENTS}" \
   --rationale "${2:-RATIONALE_FROM_ARGS}" \
   --repo "${3:-CURRENT_PROJECT}" \
   ${SESSION_ID:+--session "$SESSION_ID"} \
+  ${SUPERSEDES:+--supersedes "$SUPERSEDES"} \
   --db claude_memory
 ```
 

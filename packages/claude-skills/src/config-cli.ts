@@ -21,6 +21,9 @@ const SET_KEYS: Record<string, { env: string; validate: (v: string) => string | 
   capture: { env: "ARCADEDB_CAPTURE", validate: v => v === "on" || v === "off" ? null : "expected on or off" },
   embed: { env: "ARCADEDB_EMBED", validate: v => v === "on" || v === "off" ? null : "expected on or off" },
   extractor: { env: "ARCADEDB_EXTRACTOR", validate: v => v === "off" || v === "live" || v === "dryrun" ? null : "expected off, live or dryrun" },
+  rollup: { env: "ARCADEDB_ROLLUP", validate: v => v === "on" || v === "off" ? null : "expected on or off" },
+  "rollup-model": { env: "ARCADEDB_ROLLUP_MODEL", validate: v => v.trim() ? null : "expected a model name" },
+  "rollup-transport": { env: "ARCADEDB_ROLLUP_TRANSPORT", validate: v => v === "claude" || v === "api" ? null : "expected claude or api" },
 };
 export const SET_KEY_NAMES = Object.keys(SET_KEYS).join("|");
 
@@ -41,6 +44,7 @@ export async function configShow(io: Io): Promise<number> {
   io.out(`  ${pad("capture:", 12)}${pad(cfg.capture ? "on" : "off", 24)}(${cfg.sources.capture})`);
   io.out(`  ${pad("embed:", 12)}${pad(cfg.embed ? `on, runtime ${embedStatus()}` : "off", 24)}(${cfg.sources.embed})`);
   io.out(`  ${pad("extractor:", 12)}${pad(cfg.extractor, 24)}(${cfg.sources.extractor})`);
+  io.out(`  ${pad("rollup:", 12)}${pad(cfg.rollup ? `on, ${cfg.rollupModel} via ${cfg.rollupTransport}` : "off", 24)}(${cfg.sources.rollup})`);
   const probe = await probeServer(toClientEnv(cfg));
   const bannerLines = probeBanner(probe, cfg.username);
   io.out(probe.status === "ok" ? bannerLines[0]!.replace(/^ {2}/, "") : bannerLines[0]!);

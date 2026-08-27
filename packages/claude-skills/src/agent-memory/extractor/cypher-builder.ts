@@ -89,6 +89,15 @@ MERGE (s)-[r:${triple.verb}]->(o)
                 r.count = 1
   ON MATCH  SET r.lastAt = datetime(),
                 r.count = coalesce(r.count, 1) + 1
-MERGE (sess:Session {id: ${quote(sessionDbId)}})
+${supersedeClause(triple)}MERGE (sess:Session {id: ${quote(sessionDbId)}})
 MERGE (s)-[:DURING]->(sess)`;
+}
+
+/** A Decision SUPERSEDES Decision triple closes the old decision's validity window (bi-temporal, nothing deleted). */
+function supersedeClause(triple: BuildArgs["triple"]): string {
+  if (triple.verb !== "SUPERSEDES" || triple.subject.label !== "Decision" || triple.object.label !== "Decision") return "";
+  return `SET o.validTo = coalesce(o.validTo, s.validFrom, s.decidedAt, datetime()),
+    o.expiredAt = coalesce(o.expiredAt, datetime()),
+    o.supersededBy = coalesce(o.supersededBy, s.id)
+`;
 }

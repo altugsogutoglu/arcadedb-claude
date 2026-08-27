@@ -7,9 +7,12 @@ import { loadProjects } from "./project-map.js";
 import { resolveConfig, toClientEnv } from "./config.js";
 import { resolveMemoryDb } from "./memory-db.js";
 import { readSessionState } from "./session-state.js";
-import { readHookInput } from "./hook-input.js";
+import { readHookInput, hooksDisabled } from "./hook-input.js";
+import { spawnRollupRunner } from "./rollup-spawn.js";
+import { logCapture } from "./capture-log.js";
 
 async function main(): Promise<void> {
+  if (hooksDisabled()) return;
   const input = readHookInput();
   const claudeCodeSessionId = input.session_id ?? process.env["CLAUDE_SESSION_ID"];
   if (!claudeCodeSessionId) return;
@@ -21,7 +24,13 @@ async function main(): Promise<void> {
   const cfg = resolveConfig();
   const client = new Client(toClientEnv(cfg));
 
-  await endSession(client, resolveMemoryDb(cfg, map), state.sessionDbId);
+  const memoryDb = resolveMemoryDb(cfg, map);
+  await endSession(client, memoryDb, state.sessionDbId);
+  // Detached: the hook itself may be killed at any moment, the runner is not.
+  if (cfg.rollup) {
+    const pid = spawnRollupRunner({ db: memoryDb });
+    if (pid) logCapture("rollup_spawned", { db: memoryDb, pid, session: state.sessionDbId });
+  }
 }
 
 function logError(err: unknown): void {

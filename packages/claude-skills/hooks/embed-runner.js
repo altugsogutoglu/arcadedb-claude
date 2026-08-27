@@ -92,7 +92,7 @@ var DEFAULT_PATH = join(homedir(), ".config", "arcadedb", ".env");
 
 // src/agent-memory/schemas/memory.ts
 var EMBEDDING_DIMENSIONS = 384;
-var EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer"];
+var EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer", "Session", "Digest"];
 
 // src/env-paths.ts
 import { homedir as homedir2 } from "node:os";
@@ -114,7 +114,10 @@ var DEFAULTS = {
   autoIndex: true,
   capture: true,
   embed: true,
-  extractor: "off"
+  extractor: "off",
+  rollup: true,
+  rollupModel: "haiku",
+  rollupTransport: "claude"
 };
 var KEYS = {
   httpUri: "ARCADEDB_HTTP_URI",
@@ -124,7 +127,10 @@ var KEYS = {
   autoIndex: "ARCADEDB_AUTO_INDEX",
   capture: "ARCADEDB_CAPTURE",
   embed: "ARCADEDB_EMBED",
-  extractor: "ARCADEDB_EXTRACTOR"
+  extractor: "ARCADEDB_EXTRACTOR",
+  rollup: "ARCADEDB_ROLLUP",
+  rollupModel: "ARCADEDB_ROLLUP_MODEL",
+  rollupTransport: "ARCADEDB_ROLLUP_TRANSPORT"
 };
 var DB_NAME = /^[a-z][a-z0-9_]*$/;
 function envFilePath() {
@@ -166,6 +172,9 @@ function resolveConfig(opts = {}) {
   const embedRaw = pick(KEYS.embed, processEnv, file, DEFAULTS.embed ? "on" : "off");
   const extractorRaw = pick(KEYS.extractor, processEnv, file, DEFAULTS.extractor);
   const extractorMode = extractorRaw.value.toLowerCase();
+  const rollupRaw = pick(KEYS.rollup, processEnv, file, DEFAULTS.rollup ? "on" : "off");
+  const rollupModelRaw = pick(KEYS.rollupModel, processEnv, file, DEFAULTS.rollupModel);
+  const rollupTransportRaw = pick(KEYS.rollupTransport, processEnv, file, DEFAULTS.rollupTransport);
   return {
     httpUri: httpUri.value.replace(/\/+$/, ""),
     username: username.value,
@@ -176,6 +185,9 @@ function resolveConfig(opts = {}) {
     embed: embedRaw.value.toLowerCase() !== "off",
     // "on" is accepted as an alias for live; anything unrecognised stays off so a typo cannot start spending tokens.
     extractor: extractorMode === "live" || extractorMode === "on" ? "live" : extractorMode === "dryrun" ? "dryrun" : "off",
+    rollup: rollupRaw.value.toLowerCase() !== "off",
+    rollupModel: rollupModelRaw.value,
+    rollupTransport: rollupTransportRaw.value.toLowerCase() === "api" ? "api" : "claude",
     envPath,
     sources: {
       httpUri: httpUri.source,
@@ -185,7 +197,10 @@ function resolveConfig(opts = {}) {
       autoIndex: autoIndexRaw.source,
       capture: captureRaw.source,
       embed: embedRaw.source,
-      extractor: extractorRaw.source
+      extractor: extractorRaw.source,
+      rollup: rollupRaw.source,
+      rollupModel: rollupModelRaw.source,
+      rollupTransport: rollupTransportRaw.source
     }
   };
 }
@@ -290,7 +305,12 @@ var TEXT_EXPR = {
   Decision: "ifnull(summary, '') + ' ' + ifnull(rationale, '')",
   Insight: "ifnull(topic, '') + ' ' + ifnull(text, '')",
   Question: "ifnull(text, '')",
-  Answer: "ifnull(text, '')"
+  Answer: "ifnull(text, '')",
+  Session: "ifnull(title, '') + ' ' + ifnull(summary, '')",
+  Digest: "ifnull(title, '') + ' ' + ifnull(text, '')"
+};
+var EMBED_WHERE = {
+  Session: " AND summary IS NOT NULL AND summary <> ''"
 };
 function flag(argv, name) {
   const i = argv.indexOf(`--${name}`);
@@ -304,7 +324,7 @@ async function embedPending(client, db, embed, types = EMBEDDED_TYPES) {
       const rows = await client.query(
         db,
         "sql",
-        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL LIMIT ${BATCH}`
+        `SELECT @rid AS rid, ${expr} AS body FROM ${type} WHERE embedding IS NULL${EMBED_WHERE[type] ?? ""} LIMIT ${BATCH}`
       );
       if (rows.length === 0) break;
       const vectors = await embed(rows.map((r) => r.body ?? ""));
@@ -362,6 +382,7 @@ if (isEntry) {
   });
 }
 export {
+  EMBED_WHERE,
   TEXT_EXPR,
   embedPending
 };

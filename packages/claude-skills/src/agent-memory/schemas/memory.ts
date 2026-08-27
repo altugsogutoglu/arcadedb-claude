@@ -3,7 +3,7 @@ import type { PropertyDef, Schema } from "./types.js";
 export const EMBEDDING_DIMENSIONS = 384;
 
 /** Types that carry a searchable `embedding`; the embed runner fills it in the background. */
-export const EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer"] as const;
+export const EMBEDDED_TYPES = ["Turn", "Decision", "Insight", "Question", "Answer", "Session", "Digest"] as const;
 export type EmbeddedType = (typeof EMBEDDED_TYPES)[number];
 
 const embedding: PropertyDef = {
@@ -22,7 +22,13 @@ export const memorySchema: Schema = {
         { name: "startedAt", type: "DATETIME", notNull: true },
         { name: "endedAt", type: "DATETIME" },
         { name: "repo", type: "STRING" },
-        { name: "summary", type: "STRING" },
+        { name: "summary", type: "STRING", fullTextIndex: true },
+        { name: "title", type: "STRING" },
+        { name: "summarizedAt", type: "DATETIME" },
+        { name: "summaryModel", type: "STRING" },
+        { name: "turnCount", type: "INTEGER" },
+        { name: "rollupAttempts", type: "INTEGER" },
+        embedding,
       ],
     },
     {
@@ -46,6 +52,12 @@ export const memorySchema: Schema = {
         { name: "rationale", type: "STRING", fullTextIndex: true },
         { name: "decidedAt", type: "DATETIME", notNull: true },
         { name: "repo", type: "STRING" },
+        // Bi-temporal validity: world time [validFrom, validTo), database time expiredAt. A closed window is
+        // a superseded decision; nothing is deleted.
+        { name: "validFrom", type: "DATETIME" },
+        { name: "validTo", type: "DATETIME" },
+        { name: "expiredAt", type: "DATETIME" },
+        { name: "supersededBy", type: "STRING" },
         embedding,
       ],
     },
@@ -81,6 +93,23 @@ export const memorySchema: Schema = {
       ],
     },
     {
+      // Weekly rollup per repo: one summary over that week's session summaries and decisions.
+      name: "Digest",
+      properties: [
+        { name: "id", type: "STRING", primaryKey: true, notNull: true },
+        { name: "repo", type: "STRING", notNull: true },
+        { name: "week", type: "STRING", notNull: true },
+        { name: "periodStart", type: "DATETIME", notNull: true },
+        { name: "periodEnd", type: "DATETIME", notNull: true },
+        { name: "title", type: "STRING" },
+        { name: "text", type: "STRING", notNull: true, fullTextIndex: true },
+        { name: "sessionCount", type: "INTEGER" },
+        { name: "createdAt", type: "DATETIME", notNull: true },
+        { name: "model", type: "STRING" },
+        embedding,
+      ],
+    },
+    {
       // Something a Turn refers to by name: a file path, symbol, commit, ticket or URL.
       // Global on purpose (no repo): the same path or class name links turns across repos.
       name: "Ref",
@@ -94,6 +123,7 @@ export const memorySchema: Schema = {
   ],
   edges: [
     { name: "MENTIONS" },
+    { name: "COVERS" },
     { name: "ABOUT" },
     { name: "DURING" },
     { name: "FOLLOWS" },
